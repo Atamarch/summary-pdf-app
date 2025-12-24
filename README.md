@@ -3,9 +3,11 @@
 A simple PDF summarizer application using FastAPI (Backend) and Next.js (Frontend) powered by Google Gemini AI.
 
 ## Project Structure
+```bash
 pdf-summarizer/
 ├── backend/        # FastAPI + Gemini AI
 └── frontend/       # Next.js app
+```
 
 ## Clone
 ```bash
