@@ -4,25 +4,53 @@ A simple PDF summarizer application using FastAPI (Backend) and Next.js (Fronten
 
 ## Project Structure
 ```bash
-pdf-summarizer/
-├── backend/        # FastAPI + Gemini AI
-└── frontend/       # Next.js app
+summary-pdf-app/
+├── be/        # GoFiber
+└── fe/        # Next.js app
+└── summary/   # FastAPI + Gemini AI
 ```
 
 ## Clone
 ```bash
-git clone https://github.com/Atamarch/summary-pdf-next.git
+git clone https://github.com/Atamarch/summary-pdf-app.git
 ```
 
-## Backend Setup (FastAPI + Gemini)
+## Backend Setup (GoFiber)
 
 ### Requirements
-- Python 3.14+ (recommended)
+- Go 1.22+
+
+### Instalation
+```bash
+cd be
+go mod tidy
+```
+
+### Environment Variables
+```bash
+cp .env.example .env
+add summary url
+```
+
+### Run Backend Server
+```bash
+go run ./src
+```
+
+### Backend Notes
+- Handles PDF upload & storage
+- Communicates with FastAPI summarizer service
+
+
+## Summary Setup (FastAPI + Gemini)
+
+### Requirements
+- Python 3.14+
 - Gemini API Key
 
 ### Installation
 ```bash
-cd backend
+cd summary
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -34,15 +62,16 @@ Create a .env file inside the backend folder:
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-### Run Backend Server
+### Run Summary Server
 ```bash
+./venv/scripts/activate
 uvicorn main:app --reload
 
 Backend will run at:
 http://localhost:8000
 ```
 
-### Backend Notes
+### Summary Notes
 - Only supports text-based PDFs (not scanned images)
 - Uses gemini-2.5-flash
 
@@ -80,5 +109,9 @@ Upload PDF and display:
 
 ### API Endpoint
 Backend endpoint used by frontend:
-
-POST /api/summarize
+- Post(/v1/pdfs)
+- Get(/v1/pdfs)
+- Get(/v1/pdfs:id)
+- Get(/v1/pdfs:id/view)
+- Delete(/v1/pdfs:id)
+- Post(/v1/pdfs:id/summarize)
