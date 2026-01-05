@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+    networks:
+      - app-network
+
+  postgresdb:
+    image: postgres:alpine
+    container_name: db_psql
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      timeout: 20s
+      retries: 10
+    ports:
+      - "6666:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: test
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./src/database/init:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+
+  # go-app:
+  #   build: ./backend
+  #   image: go-app
+  #   container_name: backend_go
+  #   ports:
+  #     - ${APP_PORT}:3000
+  #   depends_on:
+  #     postgresdb:
+  #       condition: service_healthy
+  #   volumes:
+  #     - .:/usr/src/go-app
+  #   restart: on-failure
+  #   env_file:
+  #     - .env
+  #   networks:
+  #     - app-network
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "${APP_URL}/v1/health-check"]
+  #     interval: 40s
+  #     timeout: 30s
+  #     retries: 3
+  #     start_period: 30s
+  
+  # next-app:
+  #   build: ./frontend
+  #   image: next-app
+  #   container_name: frontend_next
+  #   ports:
+  #     - 3000:3000
+  #   restart: always
+  #   networks:
+  #     - app-network
+
+
+volumes:
+  dbdata:
+
+networks:
+  app-network:
+    driver: bridge

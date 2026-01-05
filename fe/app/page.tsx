@@ -1,298 +1,225 @@
-'use client'
+"use client";
 
-import React, { useState, ChangeEvent } from 'react';
-import { Upload, FileText, Loader2, Download, AlertCircle, Trash2, Languages, HardDrive, NotepadText } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Sidebar } from '@/components/Sidebar';
+import dynamic from 'next/dynamic';
+import { SummaryPanel } from '@/components/SummaryPanel';
+import { uploadPDF, getPDFs, deletePDF, summarizePDF } from '@/services/PDFService';
+import { toast } from 'sonner';
+import { PDFFile, mapPDFToFile } from '@/types';
+import { Loader2 } from 'lucide-react';
 
-interface SummaryResponse {
-  summary: string;
-  file_name: string;
-  text_length: number;
-  detected_language: {
-    code: string;
-    name: string;
-  };
-}
+const PDFPreview = dynamic(
+  () => import('@/components/PDFPreview').then(mod => ({ default: mod.PDFPreview })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex-1 bg-gray-50 flex items-center justify-center">
+        <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+      </div>
+    )
+  }
+);
 
-export default function PDFSummarizer() {
-  const [file, setFile] = useState<File | null>(null);
-  const [summary, setSummary] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
-  const [fileName, setFileName] = useState<string>('');
-  const [fileSize, setFileSize] = useState<number>(0);
-  const [detectedLanguage, setDetectedLanguage] = useState<{ code: string; name: string } | null>(null);
+export default function HomePage() {
+  const [files, setFiles] = useState<PDFFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState<PDFFile | null>(null);
+  const [summary, setSummary] = useState({
+    text: '',
+    isLoading: false,
+    processing_time_ms: undefined,
+    generated_at: undefined
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      if (selectedFile.type !== 'application/pdf') {
-        setError('Please upload a PDF file');
-        return;
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    loadPDFs();
+  }, []);
+
+  const loadPDFs = async () => {
+    setIsLoading(true);
+
+    try {
+      const result = await getPDFs({ page: 1, limit: 50 });
+
+      if (result.success && result.data?.data) {
+        const mappedFiles = result.data.data.map(mapPDFToFile);
+        setFiles(mappedFiles);
+      } else {
+        toast.error(result.error || 'Failed to load PDFs');
       }
-      if (selectedFile.size > 50 * 1024 * 1024) {
-        setError('File size must be less than 5MB');
-        return;
-      }
-      setFile(selectedFile);
-      setFileName(selectedFile.name);
-      setFileSize(selectedFile.size);
-      setError('');
-      setSummary('');
-      setDetectedLanguage(null);
+    } catch (error) {
+      toast.error('An error occurred while loading PDFs');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSubmit = async () => {
-    if (!file) {
-      setError('Please select a PDF file');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
+  const handleUpload = async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    try {
-      const response = await fetch('http://localhost:8000/api/summarize', {
-        method: 'POST',
-        body: formData,
-      });
+    const toastId = toast.loading('Uploading PDF...');
 
-      if (!response.ok) {
-        throw new Error('Failed to generate summary');
+    try {
+      const result = await uploadPDF(formData);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Upload failed');
       }
 
-      const data: SummaryResponse = await response.json();
-      setSummary(data.summary);
-      setDetectedLanguage(data.detected_language);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred. Please try again.';
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
+      toast.success('PDF uploaded successfully!', { id: toastId });
+
+      await loadPDFs();
+
+      setSelectedFile({
+        id: result.data.id,
+        name: result.data.original_filename,
+        size: result.data.file_size,
+        uploadedAt: new Date(),
+      });
+
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to upload PDF', { id: toastId });
     }
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([summary], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${fileName.replace('.pdf', '')}_summary.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleFileSelect = (file: PDFFile) => {
+    setSelectedFile(file);
+    setSummary({
+      text: '', isLoading: false, processing_time_ms: undefined,
+      generated_at: undefined
+    });
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-  };
+  const handleFileDelete = (file: PDFFile) => {
+    toast.custom((t) => (
+      <div className="bg-white rounded-lg shadow-xl p-4 w-[340px]">
+        <p className="font-semibold text-gray-900">
+          Delete PDF?
+        </p>
 
-  const renderMarkdown = (text: string) => {
-    const lines = text.split('\n');
-    const elements: React.ReactNode[] = [];
+        <p className="text-sm text-gray-600 mt-2">
+          <span className="font-medium text-gray-900">
+            “{file.name}”
+          </span>{" "}
+          will be permanently deleted and cannot be recovered.
+        </p>
 
-    lines.forEach((line, i) => {
-      if (line.trim()) {
-        const processedLine = line
-          .split(/(<mark[^>]*>.*?<\/mark>|\*\*.*?\*\*)/)
-          .map((part, j) => {
-            if (part.includes('<mark')) {
-              const content = part.match(/>(.+?)</)?.[1] || '';
-              return (
-                <mark
-                  key={j}
-                  style={{ backgroundColor: '#2196F3', color: 'white' }}
-                  className="px-1 py-0.5 rounded"
-                >
-                  {content}
-                </mark>
+        <div className="flex justify-end gap-2 mt-4">
+          {/* CANCEL */}
+          <button
+            onClick={() => toast.dismiss(t)}
+            className="px-3 py-1.5 rounded bg-gray-200 hover:bg-gray-300 text-sm"
+          >
+            Cancel
+          </button>
+
+          {/* CONFIRM */}
+          <button
+            onClick={async () => {
+              toast.dismiss(t);
+
+              const loadingToast = toast.loading(
+                `Deleting “${file.name}”…`
               );
-            }
-            return part;
-          });
 
-        elements.push(
-          <p key={i} className="mb-3 text-gray-700 leading-relaxed">
-            {processedLine}
-          </p>
-        );
-        return;
-      }
+              try {
+                const result = await deletePDF(file.id);
 
-      elements.push(<br key={i} />);
+                if (!result.success) {
+                  throw new Error(result.error || 'Delete failed');
+                }
+
+                if (selectedFile?.id === file.id) {
+                  setSelectedFile(null);
+                  setSummary({
+                    text: '', isLoading: false, processing_time_ms: undefined,
+                    generated_at: undefined
+                  });
+                }
+
+                await loadPDFs();
+
+                toast.success(
+                  `“${file.name}” deleted successfully`,
+                  { id: loadingToast }
+                );
+              } catch (err: any) {
+                toast.error(
+                  err.message || `Failed to delete “${file.name}”`,
+                  { id: loadingToast }
+                );
+              }
+            }}
+            className="px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 text-sm"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    ));
+  };
+
+  const handleSummarize = async () => {
+    if (!selectedFile) return;
+
+    setSummary({
+      text: '', isLoading: true, processing_time_ms: undefined,
+      generated_at: undefined
     });
 
-    return elements;
+    const result = await summarizePDF(selectedFile.id);
+
+    if (result.success && result.data) {
+      setSummary({
+        text: result.data.summary_text,
+        isLoading: false,
+        processing_time_ms: result.data.processing_time_ms,
+        generated_at: result.data.generated_at
+      });
+
+      const timeInSeconds = (result.data.processing_time_ms / 1000).toFixed(2);
+      toast.success(`Summary generated in ${timeInSeconds}s!`);
+    } else {
+      setSummary({
+        text: '', isLoading: false, processing_time_ms: undefined,
+        generated_at: undefined
+      });
+      toast.error(result.error || 'Failed to generate summary');
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-800 to-slate-700">
-      <div className="max-w-5xl mx-auto px-4 py-12">
-        {/* Header */}
-        <div className="text-center mb-7">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-b from-slate-700 to-slate-500 rounded-2xl mb-4 shadow-lg">
-            <FileText className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold text-white">PDF Summarizer</h1>
-          <p className="text-slate-400 text-lg">
-            Upload a PDF and get an AI-powered summary in seconds
-          </p>
-        </div>
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar
+        files={files}
+        selectedFile={selectedFile}
+        onFileSelect={handleFileSelect}
+        onUpload={handleUpload}
+        onFileDelete={handleFileDelete}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(!sidebarOpen)}
+      />
 
-        <div className="bg-slate-900 p-5 rounded-xl">
-          <div className="grid grid-cols-2 lg:grid-cols-2 gap-8">
-            <div
-              className="bg-slate-500 p-1 mb-2 rounded-xl"
-              style={{
-                boxShadow:
-                  'inset 0 0px 10px rgba(0, 0, 0, 1), inset 0 0px 6px rgba(0, 0, 0, 0.5)',
-              }}
-            >
-              <p className="text-slate-300 text-center font-bold">Upload File</p>
-            </div>
-            <div
-              className="bg-slate-500 p-1 mb-2 rounded-xl"
-              style={{
-                boxShadow:
-                  'inset 0 0px 10px rgba(0, 0, 0, 1), inset 0 0px 6px rgba(0, 0, 0, 0.5)',
-              }}
-            >
-              <p className="text-slate-300 text-center font-bold">Summary Result</p>
-            </div>
-          </div>
+      <PDFPreview file={selectedFile} />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8">
-            {/* Upload Section */}
-            <div
-              className="bg-gray-100 rounded-2xl p-8 flex flex-col"
-              style={{
-                boxShadow:
-                  'inset 0 0px 10px rgba(0, 0, 0, 1), inset 0 0px 6px rgba(0, 0, 0, 0.5)',
-              }}
-            >
-              <div className="flex-1">
-                <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-slate-600 transition-colors">
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label htmlFor="file-upload" className="cursor-pointer">
-                    <Upload className="w-12 h-12 text-gray-400 m-auto mb-4" />
-                    <p className="text-gray-700 font-medium mb-2">
-                      {fileName || 'Click to upload or drag and drop'}
-                    </p>
-                    <p className="text-sm text-gray-500">PDF files only (Max 5MB)</p>
-                  </label>
-                </div>
+      <SummaryPanel
+        summary={summary}
+        onSummarize={handleSummarize}
+        hasFile={!!selectedFile}
+      />
 
-                {error && (
-                  <div className="mt-4 flex items-center gap-2 bg-red-50 text-red-700 p-4 rounded-lg">
-                    <AlertCircle className="w-5 h-5" />
-                    <span>{error}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-auto pt-4 space-y-4">
-                {fileName && (
-                  <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <FileText className="w-5 h-5 text-green-700" />
-                        <span className="text-green-900 font-medium text-sm">
-                          {fileName}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setFile(null);
-                          setFileName('');
-                          setFileSize(0);
-                          setSummary('');
-                          setDetectedLanguage(null);
-                        }}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    {/* File Info */}
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <div className="flex items-center gap-1">
-                        <HardDrive className="w-4 h-4" />
-                        <span>{formatFileSize(fileSize)}</span>
-                      </div>
-                      {detectedLanguage && (
-                        <div className="flex items-center gap-1">
-                          <Languages className="w-4 h-4" />
-                          <span>{detectedLanguage.name}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  onClick={handleSubmit}
-                  disabled={!file || loading}
-                  className="w-full bg-slate-600 hover:bg-slate-700 disabled:bg-slate-400 text-white font-semibold py-4 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Generating Summary...
-                    </>
-                  ) : (
-                    'Generate Summary'
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Summary Section */}
-            <div
-              className="bg-gray-100 rounded-2xl shadow-xl p-8 min-h-[500px] max-h-[600px] overflow-y-auto"
-              style={{
-                boxShadow:
-                  'inset 0 0px 10px rgba(0, 0, 0, 1), inset 0 0px 6px rgba(0, 0, 0, 0.5)',
-              }}
-            >
-              {summary ? (
-                <>
-                  <div className="flex items-center mb-3 top-0 bg-gray-300 p-3 rounded-xl shadow-md">
-                    <NotepadText className='text-2xl font-bold text-gray-900'/>
-                    <h2 className="text-2xl font-bold text-gray-900">Summary</h2>
-                    <button
-                      onClick={handleDownload}
-                      className="flex items-center ml-auto bg-blue-900 hover:bg-blue-950 text-white font-medium py-2 px-4 rounded-lg"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="prose prose-blue max-w-none">
-                    {renderMarkdown(summary)}
-                  </div>
-                </>
-              ) : (
-                <div className="h-full flex items-center justify-center text-gray-400 text-center">
-                  <p>Summary will appear here after processing</p>
-                </div>
-              )}
-            </div>
+      {isLoading && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 shadow-xl">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-700 font-medium">Loading PDFs...</p>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
