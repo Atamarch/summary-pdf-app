@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// PDFResponse for single PDF detail
 type PDFResponse struct {
 	ID               uuid.UUID `json:"id"`
 	OriginalFilename string    `json:"original_filename"`
@@ -14,7 +13,6 @@ type PDFResponse struct {
 	UploadDate       time.Time `json:"upload_date"`
 }
 
-// PDFListResponse for list PDFs with pagination
 type PDFListResponse struct {
 	Data       []PDFResponse `json:"data"`
 	Total      int64         `json:"total"`
@@ -23,7 +21,6 @@ type PDFListResponse struct {
 	TotalPages int           `json:"total_pages"`
 }
 
-// SummaryResponse for summarization result (not stored in DB)
 type SummaryResponse struct {
 	PDFID            uuid.UUID `json:"pdf_id"`
 	OriginalFilename string    `json:"original_filename"`
@@ -32,7 +29,6 @@ type SummaryResponse struct {
 	GeneratedAt      time.Time `json:"generated_at"`
 }
 
-// UploadPDFResponse after successful upload
 type UploadPDFResponse struct {
 	ID               uuid.UUID `json:"id"`
 	OriginalFilename string    `json:"original_filename"`

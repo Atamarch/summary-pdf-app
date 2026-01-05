@@ -2,24 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/Sidebar';
-import dynamic from 'next/dynamic';
 import { SummaryPanel } from '@/components/SummaryPanel';
+import { PDFPreview } from '@/components/PDFPreview';
 import { uploadPDF, getPDFs, deletePDF, summarizePDF } from '@/services/PDFService';
 import { toast } from 'sonner';
 import { PDFFile, mapPDFToFile } from '@/types';
-import { Loader2 } from 'lucide-react';
-
-const PDFPreview = dynamic(
-  () => import('@/components/PDFPreview').then(mod => ({ default: mod.PDFPreview })),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex-1 bg-gray-50 flex items-center justify-center">
-        <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
-      </div>
-    )
-  }
-);
 
 export default function HomePage() {
   const [files, setFiles] = useState<PDFFile[]>([]);

@@ -74,7 +74,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
           disabled={!hasFile || summary.isLoading}
           className={`w-full px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center ${!hasFile || summary.isLoading
               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'bg-gradient-to-r from-sky-700 to-blue-500 text-white rounded-lg hover:bg-gradient-to-r hover:from-blue-600 hover:to-sky-800'
             }`}
         >
           {summary.isLoading ? (

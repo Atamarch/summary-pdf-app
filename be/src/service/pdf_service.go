@@ -49,7 +49,6 @@ func NewPDFService(db *gorm.DB, validate *validator.Validate, summaryServiceURL 
 	}
 }
 
-// UploadPDF handles PDF file upload
 func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -57,39 +56,32 @@ func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "File is required")
 	}
 
-	// Validate file extension
 	ext := filepath.Ext(file.Filename)
 	if ext != ".pdf" {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "Only PDF files are allowed")
 	}
 
-	// Validate file size (max 10MB)
-	maxSize := int64(10 * 1024 * 1024) // 10MB
+	maxSize := int64(10 * 1024 * 1024)
 	if file.Size > maxSize {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "File size exceeds 10MB limit")
 	}
 
-	// Generate unique filename
 	uniqueID := uuid.New().String()
 	filename := fmt.Sprintf("%s%s", uniqueID, ext)
 
-	// Create storage directory if not exists
 	storageDir := "./storage/pdf"
 	if err := os.MkdirAll(storageDir, os.ModePerm); err != nil {
 		s.Log.Errorf("Failed to create storage directory: %+v", err)
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to create storage directory")
 	}
 
-	// Full file path
 	filePath := filepath.Join(storageDir, filename)
 
-	// Save file to storage
 	if err := c.SaveFile(file, filePath); err != nil {
 		s.Log.Errorf("Failed to save file: %+v", err)
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to save file")
 	}
 
-	// Create PDF record in database
 	pdf := &model.PDF{
 		Filename:         filename,
 		OriginalFilename: file.Filename,
@@ -99,16 +91,14 @@ func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 
 	result := s.DB.WithContext(c.Context()).Create(pdf)
 	if result.Error != nil {
-		// Rollback: delete file if DB insert fails
 		os.Remove(filePath)
 		s.Log.Errorf("Failed to create PDF record: %+v", result.Error)
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to save PDF metadata")
 	}
-
 	return pdf, nil
 }
 
-// GetPDFs retrieves all PDFs with pagination and search
+
 func (s *pdfService) GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model.PDF, int64, error) {
 	var pdfs []model.PDF
 	var totalResults int64
@@ -124,14 +114,12 @@ func (s *pdfService) GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model
 		query = query.Where("original_filename LIKE ?", "%"+search+"%")
 	}
 
-	// Count total results
 	result := query.Model(&model.PDF{}).Count(&totalResults)
 	if result.Error != nil {
 		s.Log.Errorf("Failed to count PDFs: %+v", result.Error)
 		return nil, 0, result.Error
 	}
 
-	// Get paginated results
 	result = query.Limit(params.Limit).Offset(offset).Find(&pdfs)
 	if result.Error != nil {
 		s.Log.Errorf("Failed to get PDFs: %+v", result.Error)
@@ -141,7 +129,6 @@ func (s *pdfService) GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model
 	return pdfs, totalResults, nil
 }
 
-// GetPDFByID retrieves a single PDF by ID
 func (s *pdfService) GetPDFByID(c *fiber.Ctx, id string) (*model.PDF, error) {
 	pdf := new(model.PDF)
 
@@ -159,15 +146,12 @@ func (s *pdfService) GetPDFByID(c *fiber.Ctx, id string) (*model.PDF, error) {
 	return pdf, nil
 }
 
-// DeletePDF deletes PDF file and database record
 func (s *pdfService) DeletePDF(c *fiber.Ctx, id string) error {
-	// Get PDF record first
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {
 		return err
 	}
 
-	// Delete file from storage
 	if err := os.Remove(pdf.FilePath); err != nil {
 		if !os.IsNotExist(err) {
 			s.Log.Errorf("Failed to delete file: %+v", err)
@@ -175,33 +159,28 @@ func (s *pdfService) DeletePDF(c *fiber.Ctx, id string) error {
 		}
 	}
 
-	// Delete record from database
 	result := s.DB.WithContext(c.Context()).Delete(&model.PDF{}, "id = ?", id)
 	if result.Error != nil {
 		s.Log.Errorf("Failed to delete PDF record: %+v", result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete PDF record")
 	}
-
 	return nil
 }
 
 func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryResponse, error) {
 	startTime := time.Now()
 
-	// 1. Get PDF record
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Read file content
 	fileContent, err := os.ReadFile(pdf.FilePath)
 	if err != nil {
 		s.Log.Errorf("Failed to read file: %+v", err)
 		return nil, fiber.NewError(fiber.StatusNotFound, "PDF file not found")
 	}
 
-	// 3. Prepare multipart form request
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -213,7 +192,6 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 	part.Write(fileContent)
 	writer.Close()
 
-	// 4. Call Python service
 	httpReq, err := http.NewRequestWithContext(
 		c.Context(),
 		"POST",
@@ -234,7 +212,6 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 	}
 	defer httpResp.Body.Close()
 
-	// 5. Parse response
 	respBody, _ := io.ReadAll(httpResp.Body)
 
 	var pythonResp dto.PythonSummarizeResponse
@@ -246,7 +223,6 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 		return nil, fiber.NewError(fiber.StatusInternalServerError, pythonResp.Error)
 	}
 
-	// 6. Return response
 	return &response.SummaryResponse{
 		PDFID:            pdf.ID,
 		OriginalFilename: pdf.OriginalFilename,
@@ -256,23 +232,18 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 	}, nil
 }
 
-// ViewPDF serves the PDF file for preview
 func (s *pdfService) ViewPDF(c *fiber.Ctx, id string) error {
-	// Get PDF record
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {
 		return err
 	}
 
-	// Check if file exists
 	if _, err := os.Stat(pdf.FilePath); os.IsNotExist(err) {
 		return fiber.NewError(fiber.StatusNotFound, "PDF file not found")
 	}
 
-	// Set headers for PDF
 	c.Set("Content-Type", "application/pdf")
 	c.Set("Content-Disposition", "inline; filename=\""+pdf.OriginalFilename+"\"")
 
-	// Serve the file
 	return c.SendFile(pdf.FilePath)
 }

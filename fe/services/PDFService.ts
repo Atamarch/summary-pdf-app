@@ -16,7 +16,7 @@ export async function uploadPDF(formData: FormData) {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error("❌ Error response:", error);
+      console.error("Error response:", error);
       throw new Error(error || "Failed to upload PDF");
     }
 
@@ -28,7 +28,7 @@ export async function uploadPDF(formData: FormData) {
       data: result
     };
   } catch (error) {
-    console.error("💥 Upload error:", error);
+    console.error("Upload error:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to upload PDF"
@@ -56,7 +56,7 @@ export async function getPDFs(params?: QueryParams) {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error("❌ Error response:", error);
+      console.error("Error response:", error);
       throw new Error(error || "Failed to fetch PDFs");
     }
 
@@ -67,7 +67,7 @@ export async function getPDFs(params?: QueryParams) {
       data: result
     };
   } catch (error) {
-    console.error("💥 Get PDFs error:", error);
+    console.error("Get PDFs error:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to fetch PDFs",
