@@ -29,7 +29,7 @@ type PDFService interface {
 	GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model.PDF, int64, error)
 	GetPDFByID(c *fiber.Ctx, id string) (*model.PDF, error)
 	DeletePDF(c *fiber.Ctx, id string) error
-	SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryResponse, error)
+	SummarizePDF(c *fiber.Ctx, id string, req *validation.SummarizeRequest) (*response.SummaryResponse, error)
 	ViewPDF(c *fiber.Ctx, id string) error
 }
 
@@ -167,31 +167,59 @@ func (s *pdfService) DeletePDF(c *fiber.Ctx, id string) error {
 	return nil
 }
 
-func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryResponse, error) {
+func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.SummarizeRequest) (*response.SummaryResponse, error) {
 	startTime := time.Now()
 
+	// 1. Validate request
+	if err := s.Validate.Struct(req); err != nil {
+		return nil, fiber.NewError(fiber.StatusBadRequest, "Invalid request data")
+	}
+
+	// 2. Get PDF by ID
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {
 		return nil, err
 	}
 
+	// 3. Update language dan output_type DULU sebelum generate
+	updates := map[string]interface{}{
+		"language":    req.Language,
+		"output_type": req.OutputType,
+	}
+	
+	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		s.Log.Errorf("Failed to update PDF config: %+v", err)
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to update configuration")
+	}
+
+	// 4. Read PDF file
 	fileContent, err := os.ReadFile(pdf.FilePath)
 	if err != nil {
 		s.Log.Errorf("Failed to read file: %+v", err)
 		return nil, fiber.NewError(fiber.StatusNotFound, "PDF file not found")
 	}
 
+	// 5. Prepare multipart form untuk kirim ke Python
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
+	// Kirim file
 	part, err := writer.CreateFormFile("file", pdf.OriginalFilename)
 	if err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to create form")
 	}
-
 	part.Write(fileContent)
+
+	// Kirim metadata
+	writer.WriteField("pdf_id", pdf.ID.String())
+	writer.WriteField("original_filename", pdf.OriginalFilename)
+	writer.WriteField("file_size", fmt.Sprintf("%d", pdf.FileSize))
+	writer.WriteField("language", req.Language)
+	writer.WriteField("output_type", req.OutputType)
+
 	writer.Close()
 
+	// 6. Call Python service
 	httpReq, err := http.NewRequestWithContext(
 		c.Context(),
 		"POST",
@@ -214,6 +242,7 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 
 	respBody, _ := io.ReadAll(httpResp.Body)
 
+	// 7. Parse Python response
 	var pythonResp dto.PythonSummarizeResponse
 	if err := json.Unmarshal(respBody, &pythonResp); err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to parse response")
@@ -223,15 +252,23 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string) (*response.SummaryRes
 		return nil, fiber.NewError(fiber.StatusInternalServerError, pythonResp.Error)
 	}
 
+	// 8. Update summary di database (trigger otomatis log ke pdf_logs)
+	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Update("summary", pythonResp.SummaryText).Error; err != nil {
+		s.Log.Errorf("Failed to save summary: %+v", err)
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to save summary")
+	}
+
+	// 9. Return response
 	return &response.SummaryResponse{
 		PDFID:            pdf.ID,
 		OriginalFilename: pdf.OriginalFilename,
 		SummaryText:      pythonResp.SummaryText,
+		Language:         req.Language,
+		OutputType:       req.OutputType,
 		ProcessingTimeMs: int(time.Since(startTime).Milliseconds()),
 		GeneratedAt:      time.Now(),
 	}, nil
 }
-
 func (s *pdfService) ViewPDF(c *fiber.Ctx, id string) error {
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {

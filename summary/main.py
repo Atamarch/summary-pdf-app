@@ -1,16 +1,16 @@
-import os
-import time
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import time
+import os
+import io
 from pypdf import PdfReader
 import google.generativeai as genai
 from dotenv import load_dotenv
 from langdetect import detect, DetectorFactory
-import io
+from typing import Optional
 
 DetectorFactory.seed = 0
-
 load_dotenv()
 
 # Configure Gemini
@@ -29,14 +29,14 @@ model = genai.GenerativeModel(
 
 app = FastAPI(title="PDF Summarizer API")
 
-# CORS 
+# CORS
 backend_url = os.getenv("BACKEND_URL")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[backend_url] if backend_url else [],
+    allow_origins=[backend_url] if backend_url else ["*"],
     allow_credentials=True,
-    allow_methods=["POST"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["POST", "GET"],
+    allow_headers=["*"],
 )
 
 # Response DTO
@@ -44,7 +44,7 @@ class SummarizeResponse(BaseModel):
     summary_text: str
     processing_time_ms: int
     success: bool
-    error: str = None
+    error: str = ""
 
 def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     """Extract text from PDF bytes"""
@@ -67,66 +67,88 @@ def detect_language(text: str) -> tuple:
         sample = text[:1000].strip()
         
         if not sample:
-            return "unknown", "Unknown"
+            return "en", "English"
         
         lang_code = detect(sample)
         
         lang_names = {
             'id': 'Indonesian',
             'en': 'English',
-            'ms': 'Malay',
-            'jv': 'Javanese',
-            'su': 'Sundanese',
-            'es': 'Spanish',
-            'fr': 'French',
-            'de': 'German',
-            'it': 'Italian',
-            'pt': 'Portuguese',
-            'nl': 'Dutch',
-            'ru': 'Russian',
-            'ja': 'Japanese',
-            'ko': 'Korean',
-            'zh-cn': 'Chinese (Simplified)',
-            'zh-tw': 'Chinese (Traditional)',
-            'ar': 'Arabic',
-            'hi': 'Hindi',
-            'th': 'Thai',
-            'vi': 'Vietnamese',
+            'ja': 'Japanese'
         }
         
-        lang_name = lang_names.get(lang_code, lang_code.upper())
+        lang_name = lang_names.get(lang_code, "English")
+        lang_code = lang_code if lang_code in ['id', 'en', 'ja'] else 'en'
+        
         return lang_code, lang_name
         
     except Exception:
-        return "unknown", "Unknown"
+        return "en", "English"
 
-def summarize_text(text: str, lang_code: str = "en") -> str:
-    """Generate summary using Gemini AI"""
+def get_target_language(lang_config: str, detected_lang: str) -> tuple:
+    """
+    Determine target language based on config
+    Priority: user config > auto detect
+    """
+    if lang_config == "auto":
+        return detected_lang, "detected language"
+    elif lang_config == "id":
+        return "id", "Indonesian"
+    elif lang_config == "en":
+        return "en", "English"
+    elif lang_config == "ja":
+        return "ja", "Japanese"
+    else:
+        return detected_lang, "detected language"
 
+def summarize_text(text: str, target_lang: str, output_type: str) -> str:
+    """Generate summary using Gemini AI based on config"""
+    
+    # Language instruction
+    lang_instruction = {
+        "id": "Bahasa Indonesia",
+        "en": "English",
+        "ja": "Japanese"
+    }.get(target_lang, "English")
+    
+    # Output format instruction
+    if output_type == "paragraph":
+        format_instruction = """
+        FORMAT: Write in PARAGRAPH form with proper structure.
+        - Start with an overview paragraph (1 sentences)
+        - Follow with 1-2 body paragraphs explaining main ideas
+        - End with a conclusion paragraph (1 sentences)
+        - Use natural flowing sentences, NOT bullet points
+        - Highlight EXACTLY 5 MOST IMPORTANT terms using: <mark style="background-color: #2196F3; color: white;">term</mark>
+        """
+    else:  # bullet or pointer
+        format_instruction = """
+        FORMAT: Write in BULLET POINT form with clear structure.
+        - Start with EXACTLY ONE bullet point overview
+        - Follow with 3 bullet points for main ideas
+        - End with EXACTLY ONE concluding bullet point
+        - Each bullet must be concise (one sentence)
+        - Use "-" for bullets, NO sub-bullets
+        - Highlight EXACTLY 5 MOST IMPORTANT terms using: <mark style="background-color: #2196F3; color: white;">term</mark>
+        """
+    
     prompt = f"""
-    Summarize the following document in the SAME LANGUAGE as the original document using the STRICT structure below.
-
-    CRITICAL RULES (MUST FOLLOW):
-    1. The summary MUST use bullet points ("-") only. Do NOT write long paragraphs.
-    2. Start with EXACTLY ONE bullet point that provides a one-sentence overview of the document.
-    3. Follow with 5–7 bullet points explaining the main ideas.
-    4. End with EXACTLY ONE concluding bullet point.
-    5. Highlight EXACTLY 5 MOST IMPORTANT terms or concepts in the entire summary.
-    6. Use the following HTML tag for highlights ONLY:
-    <mark style="background-color: #2196F3; color: white;">important term</mark>
-    7. If more than 5 highlighted terms are used, the summary is INVALID.
-    8. Do NOT repeat highlighted terms unless necessary.
-    9. Avoid unnecessary wording and filler sentences.
-
-    FORMAT RULES:
-    - Each bullet point must be a single concise sentence.
-    - Do NOT use sub-bullets or numbered lists.
-    - Do NOT include headings or titles.
-
+    Summarize the following document in {lang_instruction}.
+    
+    {format_instruction}
+    
+    CRITICAL RULES:
+    1. Write ENTIRELY in {lang_instruction}
+    2. Keep it concise and clear
+    3. EXACTLY 5 highlighted terms total (no more, no less)
+    4. Do NOT repeat highlights unnecessarily
+    5. Avoid filler words
+    
     ---
     Document:
     {text[:15000]}
     """
+    
     try:
         response = model.generate_content(prompt)
         return response.text
@@ -140,15 +162,29 @@ async def root():
         "status": "running",
     }
 
-@app.post("/summarize")
-async def summarize_pdf(file: UploadFile = File(...)):
+@app.post("/summarize", response_model=SummarizeResponse)
+async def summarize_pdf(
+    file: UploadFile = File(...),
+    pdf_id: Optional[str] = Form(None),
+    original_filename: Optional[str] = Form(None),
+    file_size: Optional[str] = Form(None),
+    language: str = Form("auto"),
+    output_type: str = Form("paragraph")
+):
     """
     Endpoint untuk Golang Backend
-    Terima file upload, return summary
+    Terima file + config, return summary
     """
     start_time = time.time()
     
     try:
+        print(f"Processing PDF:")
+        print(f"  - PDF ID: {pdf_id}")
+        print(f"  - Filename: {original_filename}")
+        print(f"  - Size: {file_size} bytes")
+        print(f"  - Language Config: {language}")
+        print(f"  - Output Type: {output_type}")
+        
         # Read file content
         pdf_bytes = await file.read()
         
@@ -172,13 +208,21 @@ async def summarize_pdf(file: UploadFile = File(...)):
             )
         
         # Detect language
-        lang_code, lang_name = detect_language(text)
+        detected_lang, detected_name = detect_language(text)
+        print(f"  - Detected Language: {detected_name} ({detected_lang})")
         
-        # Generate summary
-        summary = summarize_text(text, lang_code)
+        # Determine target language based on config
+        target_lang, lang_label = get_target_language(language, detected_lang)
+        print(f"  - Target Language: {target_lang}")
+        print(f"  - Output Format: {output_type}")
+        
+        # Generate summary with config
+        summary = summarize_text(text, target_lang, output_type)
         
         # Calculate processing time
         processing_time = int((time.time() - start_time) * 1000)
+        
+        print(f"  - Processing completed in {processing_time}ms")
         
         return SummarizeResponse(
             summary_text=summary,
@@ -188,6 +232,7 @@ async def summarize_pdf(file: UploadFile = File(...)):
         
     except Exception as e:
         processing_time = int((time.time() - start_time) * 1000)
+        print(f"  - Error: {str(e)}")
         return SummarizeResponse(
             summary_text="",
             processing_time_ms=processing_time,

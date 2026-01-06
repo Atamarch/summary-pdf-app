@@ -13,3 +13,8 @@ type QueryPDF struct {
 type SummarizePDF struct {
 	PDFID string `json:"pdf_id" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
+
+type SummarizeRequest struct {
+	Language   string `json:"language" validate:"required,oneof=auto id en ja"`
+	OutputType string `json:"output_type" validate:"required,oneof=paragraph bullet pointer"`
+}

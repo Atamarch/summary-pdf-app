@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Upload, FileText, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Upload, FileText, Trash2, ChevronLeft, ChevronRight, History } from 'lucide-react';
 import { SidebarProps, PDFFile } from '@/types';
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -10,8 +10,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onFileSelect,
   onUpload,
   onFileDelete,
+  onOpenHistory,
   isOpen,
   onToggle
+  
 }) => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -89,11 +91,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        onOpenHistory(file);
+                      }}
+                      className="p-1 rounded hover:bg-yellow-300"
+                    >
+                      <History className="w-4 h-auto text-gray-400 hover:text-yellow-600" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
                         handleDelete(e, file);
                       }}
                       className="p-1 rounded hover:bg-red-100"
                     >
-                      <Trash2 className="w-4 h-4 text-gray-400 hover:text-red-600" />
+                      <Trash2 className="w-4 h-auto text-gray-400 hover:text-red-600" />
                     </button>
                   </div>
                 </div>

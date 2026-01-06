@@ -115,6 +115,9 @@ func (p *PDFController) GetPDFByID(c *fiber.Ctx) error {
 			ID:               pdf.ID,
 			OriginalFilename: pdf.OriginalFilename,
 			FileSize:         pdf.FileSize,
+			Summary: 		  pdf.Summary,
+			Language: 		  pdf.Language,
+			OutputType:  	  pdf.OutputType,
 			UploadDate:       pdf.UploadDate,
 		})
 }
@@ -166,10 +169,18 @@ func (p *PDFController) SummarizePDF(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid PDF ID")
 	}
 
-	summaryResponse, err := p.PDFService.SummarizePDF(c, pdfID)
+	req := new(validation.SummarizeRequest)
+	if err := c.BodyParser(req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	result, err := p.PDFService.SummarizePDF(c, pdfID, req)
 	if err != nil {
 		return err
 	}
 
-	return c.Status(fiber.StatusOK).JSON(summaryResponse)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    result,
+	})
 }
