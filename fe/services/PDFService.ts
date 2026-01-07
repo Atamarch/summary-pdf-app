@@ -186,6 +186,10 @@ export async function getPDFLogs(
 
     if (params?.page) queryParams.append("page", params.page.toString());
     if (params?.limit) queryParams.append("limit", params.limit.toString());
+    if (params?.search) queryParams.append("search", params.search);
+    if (params?.sort) queryParams.append("sort", params.sort);
+    if (params?.language) queryParams.append("language", params.language);
+    if (params?.output_type) queryParams.append("output_type", params.output_type);
 
     const url =
       `${API_URL}/v1/pdfs/${pdfId}/log` +

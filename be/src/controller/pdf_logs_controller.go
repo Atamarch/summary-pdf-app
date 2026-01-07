@@ -68,3 +68,56 @@ func (ctrl *PDFLogController) GetAllLogs(c *fiber.Ctx) error {
 		},
 	})
 }
+
+// GetLogsByPDFID godoc
+// @Summary Get PDF logs by PDF ID
+// @Description Get PDF logs for a specific PDF with pagination
+// @Tags PDF Logs
+// @Accept json
+// @Produce json
+// @Param pdf_id path string true "PDF ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{} "Success response with logs data"
+// @Failure 400 {object} map[string]interface{} "Invalid query parameters"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/pdfs/{pdf_id}/log [get]
+func (ctrl *PDFLogController) GetLogsByPDFID(c *fiber.Ctx) error {
+	pdfID := c.Params("pdf_id")
+	var params validation.QueryPDFLog
+	params.Page = c.QueryInt("page", 1)
+	params.Limit = c.QueryInt("limit", 10)
+	params.SetDefaults()
+
+	logs, total, err := ctrl.PDFLogService.GetLogsByPDFID(c, pdfID, &params)
+	if err != nil {
+		return err
+	}
+
+	// Map to response
+	var logResponses []response.PDFLogResponse
+	for _, log := range logs {
+		logResponses = append(logResponses, response.PDFLogResponse{
+			ID:         log.ID,
+			PDFID:      log.PDFID,
+			Summary:    log.Summary,
+			Language:   log.Language,
+			OutputType: log.OutputType,
+			CreatedAt:  log.CreatedAt,
+		})
+	}
+
+	totalPages := (total + int64(params.Limit) - 1) / int64(params.Limit)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "PDF logs retrieved successfully",
+		"data":    logResponses,
+		"meta": fiber.Map{
+			"page":        params.Page,
+			"limit":       params.Limit,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+	})
+}

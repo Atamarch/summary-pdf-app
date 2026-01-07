@@ -1,8 +1,8 @@
-export interface PDFFile {
+export interface PDFData {
   id: string;
-  name: string;
-  size: number;
-  uploadedAt: Date;
+  original_filename: string;
+  file_size: number;
+  upload_date: string;
   summary?: string | null;
   language?: string;
   output_type?: string;
@@ -18,24 +18,27 @@ export interface Summary {
 }
 
 export interface SidebarProps {
-  files: PDFFile[];
-  selectedFile: PDFFile | null;
-  onFileSelect: (file: PDFFile) => void;
+  files: PDFData[];
+  selectedFile: PDFData | null;
+  onFileSelect: (file: PDFData) => void;
   onUpload: (file: File) => void;
-  onFileDelete: (fileId: PDFFile) => void;
+  onFileDelete: (fileId: PDFData) => void;
   isOpen: boolean;
   onToggle: () => void;
-  onOpenHistory: (file: PDFFile) => void;
+  onOpenHistory: (file: PDFData) => void;
+  onSearch: (query: string) => void;
+  searchQuery: string;
 }
 
 export interface PDFPreviewProps {
-  file: PDFFile | null;
+  file: PDFData | null;
 }
 
 export interface SummaryPanelProps {
-  summary: Summary;
-  onSummarize: (config: { language: string; outputType: string }) => void;
+  pdfId: string | null;
+  onSummarize: (config: { language: string; outputType: string }) => Promise<{ success: boolean; data?: SummaryResponse; error?: string }>;
   hasFile: boolean;
+  isGenerating: boolean;
 }
 
 export interface PDFResponse {
@@ -61,6 +64,8 @@ export interface SummaryResponse {
   pdf_id: string;
   original_filename: string;
   summary_text: string;
+  language: string;
+  output_type: string;
   processing_time_ms?: number;
   generated_at?: string;
 }
@@ -76,14 +81,17 @@ export interface QueryParams {
   page?: number;
   limit?: number;
   search?: string;
+  sort?: 'date_desc' | 'date_asc' | 'a_z' | 'z_a';
+  language?: string;
+  output_type?: string;
 }
 
-export function mapPDFToFile(pdf: PDFResponse): PDFFile {
+export function mapPDFToFile(pdf: PDFResponse): PDFData {
   return {
     id: pdf.id,
-    name: pdf.original_filename,
-    size: pdf.file_size,
-    uploadedAt: new Date(pdf.upload_date),
+    original_filename: pdf.original_filename,
+    file_size: pdf.file_size,
+    upload_date: pdf.upload_date,
     summary: pdf.summary,
     language: pdf.language,
     output_type: pdf.output_type,

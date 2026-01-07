@@ -7,17 +7,18 @@ import { PDFPreview } from '@/components/PDFPreview';
 import { PDFHistoryModal } from '@/components/PDFModal';
 import { uploadPDF, getPDFs, deletePDF, summarizePDF, getPDFLogs } from '@/services/PDFService';
 import { toast } from 'sonner';
-import { PDFFile, mapPDFToFile, PDFLog } from '@/types';
+import { PDFData, mapPDFToFile, PDFLog } from '@/types';
 
 export default function HomePage() {
-  const [files, setFiles] = useState<PDFFile[]>([]);
-  const [selectedFile, setSelectedFile] = useState<PDFFile | null>(null);
+  const [files, setFiles] = useState<PDFData[]>([]);
+  const [selectedFile, setSelectedFile] = useState<PDFData | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyFile, setHistoryFile] = useState<PDFFile | null>(null);
+  const [historyFile, setHistoryFile] = useState<PDFData | null>(null);
   const [historyLogs, setHistoryLogs] = useState<PDFLog[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadPDFs();
@@ -42,6 +43,10 @@ export default function HomePage() {
     }
   };
 
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+  };
+
   const handleUpload = async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -61,9 +66,9 @@ export default function HomePage() {
 
       setSelectedFile({
         id: result.data.id,
-        name: result.data.original_filename,
-        size: result.data.file_size,
-        uploadedAt: new Date(),
+        original_filename: result.data.original_filename,
+        file_size: result.data.file_size,
+        upload_date: new Date().toISOString(),
       });
 
     } catch (err: any) {
@@ -71,11 +76,11 @@ export default function HomePage() {
     }
   };
 
-  const handleFileSelect = (file: PDFFile) => {
+  const handleFileSelect = (file: PDFData) => {
     setSelectedFile(file);
   };
 
-  const handleFileDelete = (file: PDFFile) => {
+  const handleFileDelete = (file: PDFData) => {
     toast.custom((t) => (
       <div className="bg-white rounded-lg shadow-xl p-4 w-[340px] border border-gray-200">
         <p className="font-semibold text-gray-900">
@@ -84,7 +89,7 @@ export default function HomePage() {
 
         <p className="text-sm text-gray-600 mt-2">
           <span className="font-medium text-gray-900">
-            "{file.name}"
+            "{file.original_filename}"
           </span>{" "}
           will be permanently deleted and cannot be recovered.
         </p>
@@ -104,7 +109,7 @@ export default function HomePage() {
               toast.dismiss(t);
 
               const loadingToast = toast.loading(
-                `Deleting "${file.name}"…`
+                `Deleting "${file.original_filename}"…`
               );
 
               try {
@@ -121,12 +126,12 @@ export default function HomePage() {
                 await loadPDFs();
 
                 toast.success(
-                  `"${file.name}" deleted successfully`,
+                  `"${file.original_filename}" deleted successfully`,
                   { id: loadingToast }
                 );
               } catch (err: any) {
                 toast.error(
-                  err.message || `Failed to delete "${file.name}"`,
+                  err.message || `Failed to delete "${file.original_filename}"`,
                   { id: loadingToast }
                 );
               }
@@ -141,7 +146,7 @@ export default function HomePage() {
   };
 
   const handleSummarize = async (config: { language: string; outputType: string }) => {
-    if (!selectedFile) return;
+    if (!selectedFile) return { success: false, error: 'No file selected' };
 
     setIsGenerating(true);
 
@@ -157,25 +162,30 @@ export default function HomePage() {
 
         // Trigger refresh di SummaryPanel via pdfId change
         setSelectedFile({ ...selectedFile });
+
+        return { success: true, data: result.data };
       } else {
         toast.error(result.error || 'Failed to generate summary');
+        return { success: false, error: result.error || 'Failed to generate summary' };
       }
     } catch (error) {
       toast.error('An error occurred while generating summary');
+      return { success: false, error: 'An error occurred while generating summary' };
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleOpenHistory = async (file: PDFFile) => {
+  const handleOpenHistory = async (file: PDFData) => {
     try {
       setHistoryOpen(true);
       setHistoryFile(file);
+      setHistoryLogs([]); // Reset logs
 
       const res = await getPDFLogs(file.id);
 
       if (res.success) {
-        setHistoryLogs(res.data.data);
+        setHistoryLogs(res.data?.data || []);
       } else {
         toast.error('Failed to load summary history');
       }
@@ -193,6 +203,8 @@ export default function HomePage() {
         onUpload={handleUpload}
         onFileDelete={handleFileDelete}
         onOpenHistory={handleOpenHistory}
+        onSearch={handleSearch}
+        searchQuery={searchQuery}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
       />

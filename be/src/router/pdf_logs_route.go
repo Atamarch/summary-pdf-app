@@ -12,5 +12,5 @@ func PDFLogRoutes(v1 fiber.Router, l service.PDFLogService) {
 
 	pdf := v1.Group("/pdfs")
 
-	pdf.Get("/:pdf_id/log", pdfLogController.GetAllLogs)
+	pdf.Get("/:pdf_id/log", pdfLogController.GetLogsByPDFID)
 }

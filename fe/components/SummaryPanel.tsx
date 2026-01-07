@@ -1,25 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Loader2, Copy, Download, Check, Clock, Calendar, X, Settings } from 'lucide-react';
 import { toast } from 'sonner';
-
-interface SummaryPanelProps {
-  pdfId: string | null;
-  onSummarize: (config: { language: string; outputType: string }) => void;
-  hasFile: boolean;
-  isGenerating: boolean;
-}
-
-interface PDFData {
-  id: string;
-  original_filename: string;
-  file_size: number;
-  summary: string | null;
-  language: string;
-  output_type: string;
-  upload_date: string;
-}
+import { PDFData, SummaryPanelProps } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -33,6 +17,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [config, setConfig] = useState({
     language: 'auto',
     outputType: 'paragraph',
@@ -51,6 +36,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     if (!pdfId) return;
     
     setIsLoading(true);
+    setProcessingTime(null);
     try {
       const response = await fetch(`${API_URL}/v1/pdfs/${pdfId}`, {
         method: "GET",
@@ -67,7 +53,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
       // Update config from PDF data
       setConfig({
         language: result.language || 'auto',
-        outputType: result.output_type || 'paragraph',
+        outputType: result.output_type === 'bullet' || result.output_type === 'pointer' ? 'pointer' : 'paragraph',
       });
     } catch (error) {
       console.error("Fetch PDF data error:", error);
@@ -104,9 +90,17 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   };
 
   const handleGenerateSummary = async () => {
-    await onSummarize(config);
-    // Refresh data after generate
-    setTimeout(() => fetchPDFData(), 1000);
+    const result = await onSummarize(config);
+    if (result.success && result.data) {
+      setProcessingTime(result.data.processing_time_ms ?? null);
+      // Update pdfData langsung dari response
+      setPdfData(prev => prev ? {
+        ...prev,
+        summary: result.data!.summary_text,
+        language: result.data!.language,
+        output_type: result.data!.output_type,
+      } : null);
+    }
   };
 
   const formatDate = (date: string) => {
@@ -220,7 +214,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                 <div className="flex items-center gap-2 text-xs text-blue-700">
                   <Settings className="w-3.5 h-3.5" />
                   <span>
-                    {getLanguageLabel(pdfData.language)} • {getOutputTypeLabel(pdfData.output_type)}
+                    {getLanguageLabel(pdfData.language || 'auto')} • {getOutputTypeLabel(pdfData.output_type || 'paragraph')}
                   </span>
                 </div>
               </div>
@@ -283,12 +277,20 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
             )}
 
             {/* Processing Info */}
-            {pdfData?.upload_date && (
+            {(pdfData?.upload_date || processingTime !== null) && (
               <div className="space-y-2 text-xs text-gray-500 bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Uploaded: {formatDate(pdfData.upload_date)}</span>
-                </div>
+                {pdfData?.upload_date && (
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Uploaded: {formatDate(pdfData.upload_date)}</span>
+                  </div>
+                )}
+                {processingTime !== null && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Processing Time: {Math.round(processingTime / 1000)}s</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -343,7 +345,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="paragraph">Paragraph</option>
-                  <option value="bullet_points">Bullet / Pointer</option>
+                  <option value="pointer">Bullet / Pointer</option>
                 </select>
               </div>
 
