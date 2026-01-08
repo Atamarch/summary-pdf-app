@@ -7,13 +7,15 @@ import (
 )
 
 type PDFResponse struct {
-    ID               uuid.UUID `json:"id"`
-    OriginalFilename string    `json:"original_filename"`
-    FileSize         int64     `json:"file_size"`
-    Summary          *string   `json:"summary,omitempty"`
-    Language         string    `json:"language"`
-    OutputType       string    `json:"output_type"`
-    UploadDate       time.Time `json:"upload_date"`
+	ID               uuid.UUID `json:"id"`
+	OriginalFilename string    `json:"original_filename"`
+	FileSize         int64     `json:"file_size"`
+	Summary          *string   `json:"summary,omitempty"`
+	Language         string    `json:"language"`
+	OutputType       string    `json:"output_type"`
+	SummaryStatus    string    `json:"summary_status"`
+	SummaryError     *string   `json:"summary_error,omitempty"`
+	UploadDate       time.Time `json:"upload_date"`
 }
 
 type PDFListResponse struct {
@@ -38,5 +40,6 @@ type UploadPDFResponse struct {
 	ID               uuid.UUID `json:"id"`
 	OriginalFilename string    `json:"original_filename"`
 	FileSize         int64     `json:"file_size"`
+	UploadDate       time.Time `json:"upload_date"`
 	Message          string    `json:"message"`
 }

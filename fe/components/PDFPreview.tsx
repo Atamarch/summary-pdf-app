@@ -64,7 +64,7 @@ export const PDFPreview: React.FC<PDFPreviewProps> = ({ file }) => {
   return (
     <div className="flex-1 bg-gray-50 flex flex-col">
       <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <h2 className="font-semibold text-gray-900 truncate">{file.name}</h2>
+        <h2 className="font-semibold text-gray-900 truncate">{file.original_filename}</h2>
         <p className="text-sm text-gray-500 mt-1">PDF Preview</p>
       </div>
 

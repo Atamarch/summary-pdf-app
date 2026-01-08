@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Upload, FileText, Trash2, ChevronLeft, ChevronRight, History } from 'lucide-react';
+import { Upload, FileText, Trash2, ChevronLeft, ChevronRight, History, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { SidebarProps, PDFData } from '@/types';
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -19,9 +20,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      onUpload(file);
+    if (!file) return;
+
+    // Validate file type
+    if (file.type !== 'application/pdf') {
+      toast.error('Please select a PDF file only.');
+      e.target.value = ''; // Reset input
+      return;
     }
+
+    // Validate file size (10MB limit)
+    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
+    if (file.size > maxSize) {
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      toast.error(`File size (${fileSizeMB} MB) exceeds the maximum limit of 10 MB. Please choose a smaller file.`);
+      e.target.value = ''; // Reset input
+      return;
+    }
+
+    onUpload(file);
   };
 
   const handleDelete = (e: React.MouseEvent, file: PDFData) => {
@@ -66,14 +83,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="hidden"
               />
             </label>
+            
+            <p className="text-xs text-gray-500 mt-2 text-center">
+              Maximum file size: 10 MB
+            </p>
 
-            <input
-              type="text"
-              placeholder="Search PDFs..."
-              value={searchQuery}
-              onChange={(e) => onSearch(e.target.value)}
-              className="w-full mt-5 px-3 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+            <div className="relative mt-5">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-auto mb-4 w-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                placeholder="Search PDF Files..."
+                value={searchQuery}
+                onChange={(e) => onSearch(e.target.value)}
+                className="w-full pl-10 pr-3 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">

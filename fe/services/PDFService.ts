@@ -15,9 +15,16 @@ export async function uploadPDF(formData: FormData) {
     const contentType = response.headers.get("content-type");
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error("Error response:", error);
-      throw new Error(error || "Failed to upload PDF");
+      let errorMessage = "Failed to upload PDF";
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.message || errorData.error || errorMessage;
+      } catch {
+        // If not JSON, use text
+        const errorText = await response.text();
+        errorMessage = errorText || errorMessage;
+      }
+      throw new Error(errorMessage);
     }
 
     const result = await response.json();
@@ -154,6 +161,35 @@ export async function summarizePDF(id: string, config: { language: string; outpu
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to summarize PDF"
+    };
+  }
+}
+
+export async function cancelSummarization(id: string) {
+  try {
+    const response = await fetch(`${API_URL}/v1/pdfs/${id}/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(error || "Failed to cancel summarization");
+    }
+
+    const result = await response.json();
+
+    return {
+      success: true,
+      data: result
+    };
+  } catch (error) {
+    console.error("Cancel summarization error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to cancel summarization"
     };
   }
 }

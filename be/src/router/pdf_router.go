@@ -20,4 +20,5 @@ func PDFRoutes(v1 fiber.Router, p service.PDFService) {
 	pdf.Get("/:id/view", pdfHandler.ViewPDF)
 	pdf.Delete("/:pdfId", pdfController.DeletePDF)
 	pdf.Post("/:pdfId/summarize", pdfController.SummarizePDF)
+	pdf.Post("/:pdfId/cancel", pdfController.CancelSummarization)
 }

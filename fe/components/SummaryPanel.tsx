@@ -11,7 +11,11 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   pdfId,
   onSummarize,
   hasFile,
-  isGenerating
+  isGenerating,
+  summaryStatus,
+  summaryError,
+  onRetry,
+  onCancel
 }) => {
   const [pdfData, setPdfData] = useState<PDFData | null>(null);
   const [copied, setCopied] = useState(false);
@@ -23,6 +27,8 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     outputType: 'paragraph',
   });
 
+  const hasSummary = !!(pdfData?.summary) || summaryStatus === 'completed';
+
   // Fetch PDF data when pdfId changes
   useEffect(() => {
     if (pdfId) {
@@ -32,11 +38,36 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     }
   }, [pdfId]);
 
+  // Update local state when props change
+  useEffect(() => {
+    if (pdfData && summaryStatus) {
+      // Update pdfData dengan status terbaru dari props
+      setPdfData(prev => prev ? {
+        ...prev,
+        summary_status: summaryStatus,
+        summary_error: summaryError
+      } : null);
+      
+      // Jika status berubah ke completed, fetch ulang data untuk get summary terbaru
+      if (summaryStatus === 'completed' && pdfData.summary_status !== 'completed') {
+        fetchPDFData();
+      }
+    }
+  }, [summaryStatus, summaryError]);
+
+  // Handle retry - simple call parent retry
+  const handleRetry = async () => {
+    if (onRetry) {
+      await onRetry();
+    } else {
+      await handleGenerateSummary();
+    }
+  };
+
   const fetchPDFData = async () => {
     if (!pdfId) return;
-    
+
     setIsLoading(true);
-    setProcessingTime(null);
     try {
       const response = await fetch(`${API_URL}/v1/pdfs/${pdfId}`, {
         method: "GET",
@@ -49,7 +80,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
 
       const result = await response.json();
       setPdfData(result);
-      
+
       // Update config from PDF data
       setConfig({
         language: result.language || 'auto',
@@ -91,8 +122,10 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
 
   const handleGenerateSummary = async () => {
     const result = await onSummarize(config);
+
     if (result.success && result.data) {
       setProcessingTime(result.data.processing_time_ms ?? null);
+
       // Update pdfData langsung dari response
       setPdfData(prev => prev ? {
         ...prev,
@@ -104,13 +137,18 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   };
 
   const formatDate = (date: string) => {
-    return new Intl.DateTimeFormat('id-ID', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(date));
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+
+    // Parse manual dari string "2026-01-08T12:34"
+    const [datePart, timePart] = date.slice(0, 16).split('T');
+    const [year, month, day] = datePart.split('-');
+
+    const monthName = months[parseInt(month) - 1];
+
+    return `${parseInt(day)} ${monthName} ${year}, ${timePart}`;
   };
 
   const renderHighlightedText = (text: string) => {
@@ -146,7 +184,37 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     return type === 'paragraph' ? 'Paragraph' : 'Bullet Points';
   };
 
-  const hasSummary = pdfData?.summary;
+  const getButtonConfig = () => {
+    // Prioritas: props summaryStatus > pdfData.summary_status
+    const currentStatus = summaryStatus || pdfData?.summary_status || 'pending';
+
+    if (currentStatus === 'processing' || isGenerating) {
+      return {
+        text: 'Cancel Generation',
+        onClick: onCancel,
+        disabled: false,
+        className: 'bg-gradient-to-r from-red-500 via-red-600 to-red-500 hover:from-red-600 hover:to-red-600 text-white transition-colors'
+      };
+    } else if (currentStatus === 'failed') {
+      return {
+        text: 'Retry Generate',
+        onClick: handleRetry,
+        disabled: false,
+        className: 'bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-400 hover:from-yellow-500 hover:to-yellow-500 text-white transition-colors'
+      };
+    } else {
+      return {
+        text: isGenerating ? 'Generating...' : 'Generate Summary',
+        onClick: handleGenerateSummary,
+        disabled: !hasFile || isGenerating,
+        className: !hasFile || isGenerating
+          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          : 'bg-gradient-to-r from-sky-700 to-blue-500 text-white hover:from-blue-600 hover:to-sky-800'
+      };
+    }
+  };
+
+  const buttonConfig = getButtonConfig();
 
   return (
     <div className="relative w-80 lg:w-150 bg-white border-l border-gray-200 flex flex-col h-screen">
@@ -156,33 +224,57 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
           <button
             onClick={() => setIsOpen(true)}
             disabled={!hasFile}
-            className={`p-4 rounded-lg transition-colors ${
-              !hasFile 
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-gray-500 hover:bg-gray-600 text-white'
-            }`}
+            className={`p-4 rounded-lg transition-colors ${!hasFile
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-gray-500 hover:bg-gray-600 text-white'
+              }`}
           >
             <Settings className="transition-transform duration-500 hover:rotate-90" />
           </button>
           <button
-            onClick={handleGenerateSummary}
-            disabled={!hasFile || isGenerating}
-            className={`w-full px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center ${
-              !hasFile || isGenerating
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-gradient-to-r from-sky-700 to-blue-500 text-white hover:from-blue-600 hover:to-sky-800'
-            }`}
+            onClick={buttonConfig.onClick}
+            disabled={buttonConfig.disabled}
+            className={`w-full px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center ${buttonConfig.className}`}
           >
-            {isGenerating ? (
+            {buttonConfig.text === 'Generating...' ? (
               <>
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Generating...
+                {buttonConfig.text}
               </>
             ) : (
-              'Generate Summary'
+              buttonConfig.text
             )}
           </button>
         </div>
+
+        {/* Status Info Panel */}
+        {(summaryStatus || pdfData?.summary_status) && (summaryStatus !== 'pending' && pdfData?.summary_status !== 'pending') && (
+          <div className="mt-4 p-3 rounded-lg border bg-gray-50">
+            {((summaryStatus === 'processing') || (pdfData?.summary_status === 'processing') || isGenerating) && (
+              <div className="flex items-center text-blue-600">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <span className="text-sm font-medium">Generating summary in progress...</span>
+              </div>
+            )}
+            {((summaryStatus === 'completed') || (pdfData?.summary_status === 'completed')) && (
+              <div className="flex items-center text-green-600">
+                <Check className="w-4 h-4 mr-2" />
+                <span className="text-sm font-medium">Summary generated successfully</span>
+              </div>
+            )}
+            {((summaryStatus === 'failed') || (pdfData?.summary_status === 'failed')) && (
+              <div className="text-red-600">
+                <div className="flex items-center mb-1">
+                  <X className="w-4 h-4 mr-2" />
+                  <span className="text-sm font-medium">Summary generation failed</span>
+                </div>
+                {(summaryError || pdfData?.summary_error) && (
+                  <p className="text-xs text-red-500">{summaryError || pdfData?.summary_error}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -208,7 +300,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Config Info - DARI pdfData */}
+            {/* Config Info */}
             {pdfData && (pdfData.language || pdfData.output_type) && (
               <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
                 <div className="flex items-center gap-2 text-xs text-blue-700">
@@ -298,7 +390,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
 
         {/* Settings Modal */}
         {isOpen && (
-          <div className="absolute top-44 right-4 z-30">
+          <div className="absolute top-35 right-4 z-30">
             <div className="w-72 bg-white border border-gray-200 rounded-xl shadow-lg p-5 flex flex-col gap-4">
               {/* Header */}
               <div className="flex items-center justify-between">

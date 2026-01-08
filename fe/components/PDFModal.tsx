@@ -98,8 +98,8 @@ export const PDFHistoryModal: React.FC<PDFHistoryModalProps> = ({
               onChange={(e) => setSort(e.target.value as any)}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
             >
-              <option value="date_desc">Newest First</option>
-              <option value="date_asc">Oldest First</option>
+              <option value="date_desc">Newest</option>
+              <option value="date_asc">Oldest</option>
               <option value="a_z">A-Z</option>
               <option value="z_a">Z-A</option>
             </select>

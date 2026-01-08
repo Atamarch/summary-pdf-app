@@ -16,6 +16,8 @@ type PDF struct {
 	Summary          *string   `gorm:"type:text" json:"summary,omitempty"`
 	Language         string    `gorm:"type:varchar(10);default:'auto'" json:"language"`
 	OutputType       string    `gorm:"type:varchar(20);default:'paragraph'" json:"output_type"`
+	SummaryStatus    string    `gorm:"type:varchar(20);default:'pending'" json:"summary_status"`
+	SummaryError     *string   `gorm:"type:text" json:"summary_error,omitempty"`
 	UploadDate       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"upload_date"`
 	CreatedAt        time.Time `gorm:"not null" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"not null" json:"updated_at"`

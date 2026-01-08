@@ -6,6 +6,9 @@ export interface PDFData {
   summary?: string | null;
   language?: string;
   output_type?: string;
+  summary_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  summary_error?: string | null;
+  processing_time_ms?: number;
 }
 
 export interface Summary {
@@ -39,6 +42,10 @@ export interface SummaryPanelProps {
   onSummarize: (config: { language: string; outputType: string }) => Promise<{ success: boolean; data?: SummaryResponse; error?: string }>;
   hasFile: boolean;
   isGenerating: boolean;
+  summaryStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  summaryError?: string | null;
+  onRetry?: () => void;
+  onCancel?: () => void;
 }
 
 export interface PDFResponse {
@@ -49,7 +56,9 @@ export interface PDFResponse {
   summary?: string | null;
   language?: string;
   output_type?: string;
-
+  summary_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  summary_error?: string | null;
+  processing_time_ms?: number;
 }
 
 export interface PDFListResponse {
@@ -74,6 +83,7 @@ export interface UploadPDFResponse {
   id: string;
   original_filename: string;
   file_size: number;
+  upload_date: string;
   message: string;
 }
 
@@ -95,6 +105,9 @@ export function mapPDFToFile(pdf: PDFResponse): PDFData {
     summary: pdf.summary,
     language: pdf.language,
     output_type: pdf.output_type,
+    summary_status: pdf.summary_status,
+    summary_error: pdf.summary_error,
+    processing_time_ms: pdf.processing_time_ms,
   };
 }
 

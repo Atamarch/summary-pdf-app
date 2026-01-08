@@ -7,6 +7,7 @@ import (
 	"app/src/utils"
 	"app/src/validation"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -30,6 +32,7 @@ type PDFService interface {
 	GetPDFByID(c *fiber.Ctx, id string) (*model.PDF, error)
 	DeletePDF(c *fiber.Ctx, id string) error
 	SummarizePDF(c *fiber.Ctx, id string, req *validation.SummarizeRequest) (*response.SummaryResponse, error)
+	CancelSummarization(c *fiber.Ctx, id string) error
 	ViewPDF(c *fiber.Ctx, id string) error
 }
 
@@ -61,9 +64,31 @@ func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "Only PDF files are allowed")
 	}
 
-	maxSize := int64(10 * 1024 * 1024)
+	// Validate MIME type
+	fileReader, err := file.Open()
+	if err != nil {
+		s.Log.Errorf("Failed to open file: %+v", err)
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to process file")
+	}
+	defer fileReader.Close()
+
+	buffer := make([]byte, 512)
+	n, err := fileReader.Read(buffer)
+	if err != nil && err != io.EOF {
+		s.Log.Errorf("Failed to read file: %+v", err)
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to process file")
+	}
+
+	mimeType := http.DetectContentType(buffer[:n])
+	s.Log.Infof("Detected MIME type: %s for file: %s", mimeType, file.Filename)
+	if mimeType != "application/pdf" {
+		return nil, fiber.NewError(fiber.StatusBadRequest, "Invalid file type, only PDF files are allowed")
+	}
+
+	maxSize := int64(10 * 1024 * 1024) // 10MB
 	if file.Size > maxSize {
-		return nil, fiber.NewError(fiber.StatusBadRequest, "File size exceeds 10MB limit")
+		fileSizeMB := float64(file.Size) / (1024 * 1024)
+		return nil, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("File size (%.2f MB) exceeds the maximum limit of 10 MB. Please choose a smaller file.", fileSizeMB))
 	}
 
 	uniqueID := uuid.New().String()
@@ -97,7 +122,6 @@ func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 	}
 	return pdf, nil
 }
-
 
 func (s *pdfService) GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model.PDF, int64, error) {
 	var pdfs []model.PDF
@@ -170,6 +194,10 @@ func (s *pdfService) DeletePDF(c *fiber.Ctx, id string) error {
 func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.SummarizeRequest) (*response.SummaryResponse, error) {
 	startTime := time.Now()
 
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(c.Context())
+	defer cancel()
+
 	// 1. Validate request
 	if err := s.Validate.Struct(req); err != nil {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "Invalid request data")
@@ -181,25 +209,94 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.Summa
 		return nil, err
 	}
 
-	// 3. Update language dan output_type DULU sebelum generate
+	// 3. Set status to processing
+	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"summary_status": "processing",
+		"summary_error":  nil,
+	}).Error; err != nil {
+		s.Log.Errorf("Failed to set processing status: %+v", err)
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to start summarization")
+	}
+
+	// 4. Update language dan output_type
 	updates := map[string]interface{}{
 		"language":    req.Language,
 		"output_type": req.OutputType,
+		"upload_date": time.Now(),
 	}
-	
+
 	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		s.Log.Errorf("Failed to update PDF config: %+v", err)
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to update configuration")
 	}
 
-	// 4. Read PDF file
+	// 5. Read PDF file
 	fileContent, err := os.ReadFile(pdf.FilePath)
 	if err != nil {
 		s.Log.Errorf("Failed to read file: %+v", err)
+		s.setFailedStatus(c, id, "PDF file not found")
 		return nil, fiber.NewError(fiber.StatusNotFound, "PDF file not found")
 	}
 
-	// 5. Prepare multipart form untuk kirim ke Python
+	// 6. Retry logic
+	maxRetries := 3
+	var lastError error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		s.Log.Infof("Summarization attempt %d for PDF %s", attempt, id)
+
+		pythonResp, err := s.callPythonService(ctx, pdf, fileContent, req)
+		if err != nil {
+			lastError = err
+			if s.isPermanentError(err) {
+				s.Log.Errorf("Permanent error on attempt %d: %+v", attempt, err)
+				s.setFailedStatus(c, id, err.Error())
+				return nil, err
+			}
+			// Transient error, wait before retry
+			if attempt < maxRetries {
+				waitTime := time.Duration(attempt*5) * time.Second // 5s, 10s, 15s
+				s.Log.Infof("Retrying in %v...", waitTime)
+				select {
+				case <-time.After(waitTime):
+				case <-ctx.Done():
+					s.Log.Info("Summarization cancelled")
+					s.setFailedStatus(c, id, "Cancelled by user")
+					return nil, fiber.NewError(fiber.StatusRequestTimeout, "Summarization cancelled")
+				}
+				continue
+			}
+		} else {
+			// Success
+			if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
+				"summary":        pythonResp.SummaryText,
+				"summary_status": "completed",
+				"summary_error":  nil,
+			}).Error; err != nil {
+				s.Log.Errorf("Failed to save summary: %+v", err)
+				return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to save summary")
+			}
+
+			return &response.SummaryResponse{
+				PDFID:            pdf.ID,
+				OriginalFilename: pdf.OriginalFilename,
+				SummaryText:      pythonResp.SummaryText,
+				Language:         req.Language,
+				OutputType:       req.OutputType,
+				ProcessingTimeMs: int(time.Since(startTime).Milliseconds()),
+				GeneratedAt:      time.Now(),
+			}, nil
+		}
+	}
+
+	// All retries failed
+	errorMsg := fmt.Sprintf("Failed after %d attempts: %v", maxRetries, lastError)
+	s.Log.Errorf(errorMsg)
+	s.setFailedStatus(c, id, errorMsg)
+	return nil, fiber.NewError(fiber.StatusServiceUnavailable, "Summarization failed after retries")
+}
+
+func (s *pdfService) callPythonService(ctx context.Context, pdf *model.PDF, fileContent []byte, req *validation.SummarizeRequest) (*dto.PythonSummarizeResponse, error) {
+	// Prepare multipart form
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -219,56 +316,53 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.Summa
 
 	writer.Close()
 
-	// 6. Call Python service
-	httpReq, err := http.NewRequestWithContext(
-		c.Context(),
-		"POST",
-		s.SummaryServiceURL+"/summarize",
-		body,
-	)
+	// Call Python service
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", s.SummaryServiceURL+"/summarize", body)
 	if err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to create request")
 	}
 
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
-		s.Log.Errorf("Failed to call Python service: %+v", err)
 		return nil, fiber.NewError(fiber.StatusServiceUnavailable, "Summarization service unavailable")
 	}
 	defer httpResp.Body.Close()
 
 	respBody, _ := io.ReadAll(httpResp.Body)
 
-	// 7. Parse Python response
+	// Parse response
 	var pythonResp dto.PythonSummarizeResponse
 	if err := json.Unmarshal(respBody, &pythonResp); err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to parse response")
 	}
 
 	if !pythonResp.Success {
+		if httpResp.StatusCode == 429 || strings.Contains(strings.ToLower(pythonResp.Error), "limit") {
+			return nil, fiber.NewError(fiber.StatusTooManyRequests, pythonResp.Error)
+		}
 		return nil, fiber.NewError(fiber.StatusInternalServerError, pythonResp.Error)
 	}
 
-	// 8. Update summary di database (trigger otomatis log ke pdf_logs)
-	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Update("summary", pythonResp.SummaryText).Error; err != nil {
-		s.Log.Errorf("Failed to save summary: %+v", err)
-		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to save summary")
-	}
-
-	// 9. Return response
-	return &response.SummaryResponse{
-		PDFID:            pdf.ID,
-		OriginalFilename: pdf.OriginalFilename,
-		SummaryText:      pythonResp.SummaryText,
-		Language:         req.Language,
-		OutputType:       req.OutputType,
-		ProcessingTimeMs: int(time.Since(startTime).Milliseconds()),
-		GeneratedAt:      time.Now(),
-	}, nil
+	return &pythonResp, nil
 }
+
+func (s *pdfService) isPermanentError(err error) bool {
+	if e, ok := err.(*fiber.Error); ok {
+		return e.Code == fiber.StatusBadRequest || e.Code == fiber.StatusTooManyRequests
+	}
+	return false
+}
+
+func (s *pdfService) setFailedStatus(c *fiber.Ctx, id string, errorMsg string) {
+	s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"summary_status": "failed",
+		"summary_error":  errorMsg,
+	})
+}
+
 func (s *pdfService) ViewPDF(c *fiber.Ctx, id string) error {
 	pdf, err := s.GetPDFByID(c, id)
 	if err != nil {
@@ -283,4 +377,24 @@ func (s *pdfService) ViewPDF(c *fiber.Ctx, id string) error {
 	c.Set("Content-Disposition", "inline; filename=\""+pdf.OriginalFilename+"\"")
 
 	return c.SendFile(pdf.FilePath)
+}
+
+func (s *pdfService) CancelSummarization(c *fiber.Ctx, id string) error {
+	// Validate PDF exists
+	_, err := s.GetPDFByID(c, id)
+	if err != nil {
+		return err
+	}
+
+	// Update status to cancelled/pending
+	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"summary_status": "pending",
+		"summary_error":  nil,
+	}).Error; err != nil {
+		s.Log.Errorf("Failed to cancel summarization: %+v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to cancel summarization")
+	}
+
+	s.Log.Infof("Summarization cancelled for PDF %s", id)
+	return nil
 }

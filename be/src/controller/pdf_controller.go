@@ -41,6 +41,7 @@ func (p *PDFController) UploadPDF(c *fiber.Ctx) error {
 			ID:               pdf.ID,
 			OriginalFilename: pdf.OriginalFilename,
 			FileSize:         pdf.FileSize,
+			UploadDate:       pdf.UploadDate,
 			Message:          "PDF uploaded successfully",
 		})
 }
@@ -75,6 +76,11 @@ func (p *PDFController) GetPDFs(c *fiber.Ctx) error {
 			ID:               pdf.ID,
 			OriginalFilename: pdf.OriginalFilename,
 			FileSize:         pdf.FileSize,
+			Summary:          pdf.Summary,
+			Language:         pdf.Language,
+			OutputType:       pdf.OutputType,
+			SummaryStatus:    pdf.SummaryStatus,
+			SummaryError:     pdf.SummaryError,
 			UploadDate:       pdf.UploadDate,
 		}
 	}
@@ -115,9 +121,11 @@ func (p *PDFController) GetPDFByID(c *fiber.Ctx) error {
 			ID:               pdf.ID,
 			OriginalFilename: pdf.OriginalFilename,
 			FileSize:         pdf.FileSize,
-			Summary: 		  pdf.Summary,
-			Language: 		  pdf.Language,
-			OutputType:  	  pdf.OutputType,
+			Summary:          pdf.Summary,
+			Language:         pdf.Language,
+			OutputType:       pdf.OutputType,
+			SummaryStatus:    pdf.SummaryStatus,
+			SummaryError:     pdf.SummaryError,
 			UploadDate:       pdf.UploadDate,
 		})
 }
@@ -182,5 +190,33 @@ func (p *PDFController) SummarizePDF(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"data":    result,
+	})
+}
+
+// @Tags         PDFs
+// @Summary      Cancel PDF summarization
+// @Description  Cancel ongoing PDF summarization process
+// @Produce      json
+// @Param        id  path  string  true  "PDF id"
+// @Router       /pdfs/{id}/cancel [post]
+// @Success      200  {object}  response.Common
+// @Failure      400  {object}  response.Common  "Bad Request"
+// @Failure      404  {object}  response.Common  "Not Found"
+func (p *PDFController) CancelSummarization(c *fiber.Ctx) error {
+	pdfID := c.Params("pdfId")
+
+	if _, err := uuid.Parse(pdfID); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid PDF ID")
+	}
+
+	err := p.PDFService.CancelSummarization(c, pdfID)
+	if err != nil {
+		return err
+	}
+
+	return c.Status(fiber.StatusOK).JSON(response.Common{
+		Code:    fiber.StatusOK,
+		Status:  "success",
+		Message: "Summarization cancelled successfully",
 	})
 }

@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { SummaryPanel } from '@/components/SummaryPanel';
 import { PDFPreview } from '@/components/PDFPreview';
 import { PDFHistoryModal } from '@/components/PDFModal';
-import { uploadPDF, getPDFs, deletePDF, summarizePDF, getPDFLogs } from '@/services/PDFService';
+import { uploadPDF, getPDFs, deletePDF, summarizePDF, getPDFLogs, cancelSummarization } from '@/services/PDFService';
 import { toast } from 'sonner';
 import { PDFData, mapPDFToFile, PDFLog } from '@/types';
 
@@ -19,10 +19,23 @@ export default function HomePage() {
   const [historyFile, setHistoryFile] = useState<PDFData | null>(null);
   const [historyLogs, setHistoryLogs] = useState<PDFLog[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [summaryStatus, setSummaryStatus] = useState<'pending' | 'processing' | 'completed' | 'failed'>('pending');
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [pollIntervalId, setPollIntervalId] = useState<NodeJS.Timeout | null>(null);
+  const [currentProcessingTime, setCurrentProcessingTime] = useState<number | null>(null);
 
   useEffect(() => {
     loadPDFs();
   }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalId) {
+        clearInterval(pollIntervalId);
+      }
+    };
+  }, [pollIntervalId]);
 
   const loadPDFs = async () => {
     setIsLoading(true);
@@ -41,6 +54,138 @@ export default function HomePage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleRetrySummary = async () => {
+    if (!selectedFile) return;
+
+    setSummaryStatus('processing');
+    setSummaryError(null);
+    setIsGenerating(true);
+    setCurrentProcessingTime(null); // Reset processing time
+
+    try {
+      const result = await summarizePDF(selectedFile.id, {
+        language: selectedFile.language || 'auto',
+        output_type: selectedFile.output_type || 'paragraph'
+      });
+
+      if (result.success && result.data) {
+        // Jika ada processing_time_ms, berarti sync response
+        if (result.data.processing_time_ms) {
+          // Set processing time untuk display
+          setCurrentProcessingTime(result.data.processing_time_ms);
+          
+          // Show immediate success message dengan processing time
+          const timeInSeconds = (result.data.processing_time_ms / 1000).toFixed(2);
+          toast.success(`Summary generated in ${timeInSeconds}s!`);
+          
+          // Set status completed langsung
+          setSummaryStatus('completed');
+          setIsGenerating(false);
+          
+          // Update selectedFile dengan summary data
+          setSelectedFile(prev => prev ? {
+            ...prev,
+            summary: result.data.summary_text,
+            summary_status: 'completed',
+            language: result.data.language,
+            output_type: result.data.output_type
+          } : null);
+        } else {
+          // Start polling jika async
+          pollSummaryStatus(selectedFile.id);
+        }
+      } else {
+        setSummaryStatus('failed');
+        setSummaryError(result.error || 'Retry failed');
+        toast.error(result.error || 'Retry failed');
+      }
+    } catch (error) {
+      setSummaryStatus('failed');
+      setSummaryError('Retry failed');
+      toast.error('Retry failed');
+    } finally {
+      if (summaryStatus !== 'completed') {
+        setIsGenerating(false);
+      }
+    }
+  };
+
+  const stopPolling = async () => {
+    if (pollIntervalId) {
+      clearInterval(pollIntervalId);
+      setPollIntervalId(null);
+    }
+    
+    // Call cancel API if there's a selected file
+    if (selectedFile) {
+      try {
+        const result = await cancelSummarization(selectedFile.id);
+        if (result.success) {
+          toast.success('Summarization cancelled');
+        } else {
+          toast.error(result.error || 'Failed to cancel');
+        }
+      } catch (error) {
+        toast.error('Failed to cancel summarization');
+      }
+    }
+    
+    setSummaryStatus('pending');
+    setSummaryError(null);
+    setCurrentProcessingTime(null);
+    setIsGenerating(false);
+  };
+
+  const pollSummaryStatus = (pdfId: string) => {
+    // Clear existing polling first
+    if (pollIntervalId) {
+      clearInterval(pollIntervalId);
+    }
+
+    const intervalId = setInterval(async () => {
+      try {
+        const result = await getPDFs({ page: 1, limit: 50 });
+        if (result.success && result.data?.data) {
+          const pdf = result.data.data.find((p: any) => p.id === pdfId);
+          if (pdf) {
+            console.log('Polling status:', pdf.summary_status, pdf.summary_error); // Debug log
+            
+            setSummaryStatus(pdf.summary_status);
+            if (pdf.summary_error) {
+              setSummaryError(pdf.summary_error);
+            }
+            
+            // Update selectedFile dengan data terbaru
+            if (selectedFile?.id === pdfId) {
+              setSelectedFile(prev => prev ? { ...prev, ...pdf } : null);
+            }
+            
+            // Stop polling jika selesai
+            if (pdf.summary_status === 'completed') {
+              clearInterval(intervalId);
+              setPollIntervalId(null);
+              setIsGenerating(false);
+              
+              // Show success message dengan processing time jika ada
+              toast.success('Summary generated successfully!');
+            } else if (pdf.summary_status === 'failed') {
+              clearInterval(intervalId);
+              setPollIntervalId(null);
+              setIsGenerating(false);
+              
+              // Show error message
+              toast.error(pdf.summary_error || 'Summary generation failed');
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error polling summary status:', error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    setPollIntervalId(intervalId);
   };
 
   const handleSearch = (query: string) => {
@@ -68,7 +213,7 @@ export default function HomePage() {
         id: result.data.id,
         original_filename: result.data.original_filename,
         file_size: result.data.file_size,
-        upload_date: new Date().toISOString(),
+        upload_date: result.data.upload_date,
       });
 
     } catch (err: any) {
@@ -77,7 +222,26 @@ export default function HomePage() {
   };
 
   const handleFileSelect = (file: PDFData) => {
+    // Stop any existing polling when switching files
+    if (pollIntervalId) {
+      clearInterval(pollIntervalId);
+      setPollIntervalId(null);
+    }
+    
     setSelectedFile(file);
+    
+    // Set initial status based on file data
+    setSummaryStatus(file.summary_status || 'pending');
+    setSummaryError(file.summary_error || null);
+    setCurrentProcessingTime(null); // Reset processing time saat ganti file
+    
+    // If file is currently processing, start polling
+    if (file.summary_status === 'processing') {
+      setIsGenerating(true);
+      pollSummaryStatus(file.id);
+    } else {
+      setIsGenerating(false);
+    }
   };
 
   const handleFileDelete = (file: PDFData) => {
@@ -148,7 +312,10 @@ export default function HomePage() {
   const handleSummarize = async (config: { language: string; outputType: string }) => {
     if (!selectedFile) return { success: false, error: 'No file selected' };
 
+    setSummaryStatus('processing');
+    setSummaryError(null);
     setIsGenerating(true);
+    setCurrentProcessingTime(null); // Reset processing time
 
     try {
       const result = await summarizePDF(selectedFile.id, {
@@ -157,22 +324,52 @@ export default function HomePage() {
       });
 
       if (result.success && result.data) {
-        const timeInSeconds = (result.data.processing_time_ms / 1000).toFixed(2);
-        toast.success(`Summary generated in ${timeInSeconds}s!`);
-
-        // Trigger refresh di SummaryPanel via pdfId change
-        setSelectedFile({ ...selectedFile });
-
-        return { success: true, data: result.data };
+        // Jika ada processing_time_ms, berarti sync response
+        if (result.data.processing_time_ms) {
+          // Set processing time untuk display
+          setCurrentProcessingTime(result.data.processing_time_ms);
+          
+          // Show immediate success message dengan processing time
+          const timeInSeconds = (result.data.processing_time_ms / 1000).toFixed(2);
+          toast.success(`Summary generated in ${timeInSeconds}s!`);
+          
+          // Set status completed langsung
+          setSummaryStatus('completed');
+          setIsGenerating(false);
+          
+          // Update selectedFile dengan summary data
+          setSelectedFile(prev => prev ? {
+            ...prev,
+            summary: result.data.summary_text,
+            summary_status: 'completed',
+            language: result.data.language,
+            output_type: result.data.output_type
+          } : null);
+          
+          // ✅ Return result dengan processing_time_ms untuk SummaryPanel
+          return { success: true, data: result.data };
+        } else {
+          // Jika tidak ada processing_time_ms, berarti async processing
+          // Start polling untuk monitor status
+          pollSummaryStatus(selectedFile.id);
+          return { success: true, data: result.data };
+        }
       } else {
+        setSummaryStatus('failed');
+        setSummaryError(result.error || 'Failed to generate summary');
         toast.error(result.error || 'Failed to generate summary');
         return { success: false, error: result.error || 'Failed to generate summary' };
       }
     } catch (error) {
+      setSummaryStatus('failed');
+      setSummaryError('An error occurred while generating summary');
       toast.error('An error occurred while generating summary');
       return { success: false, error: 'An error occurred while generating summary' };
     } finally {
-      setIsGenerating(false);
+      // Only set isGenerating false if not completed above
+      if (summaryStatus !== 'completed') {
+        setIsGenerating(false);
+      }
     }
   };
 
@@ -216,6 +413,11 @@ export default function HomePage() {
         onSummarize={handleSummarize}
         hasFile={!!selectedFile}
         isGenerating={isGenerating}
+        summaryStatus={summaryStatus}
+        summaryError={summaryError}
+        onRetry={handleRetrySummary}
+        onCancel={stopPolling}
+        currentProcessingTime={currentProcessingTime}
       />
 
       <PDFHistoryModal

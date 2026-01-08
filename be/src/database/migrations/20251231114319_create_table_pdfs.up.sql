@@ -8,6 +8,8 @@ CREATE TABLE pdfs (
     language VARCHAR(10) DEFAULT 'auto',
     output_type VARCHAR(20) DEFAULT 'paragraph',
     upload_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    summary_status VARCHAR(20) DEFAULT 'pending',
+    summary_error TEXT,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
