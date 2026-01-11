@@ -23,12 +23,14 @@ export default function HomePage() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [pollIntervalId, setPollIntervalId] = useState<NodeJS.Timeout | null>(null);
   const [currentProcessingTime, setCurrentProcessingTime] = useState<number | null>(null);
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
     loadPDFs();
   }, []);
 
-  // Cleanup polling on unmount
   useEffect(() => {
     return () => {
       if (pollIntervalId) {
@@ -37,15 +39,17 @@ export default function HomePage() {
     };
   }, [pollIntervalId]);
 
-  const loadPDFs = async () => {
+  const loadPDFs = async (page: number = 1, search = searchQuery) => {
     setIsLoading(true);
 
     try {
-      const result = await getPDFs({ page: 1, limit: 50 });
+      const result = await getPDFs({ page, limit: 3, search });
 
       if (result.success && result.data?.data) {
         const mappedFiles = result.data.data.map(mapPDFToFile);
         setFiles(mappedFiles);
+        setCurrentPage(page);
+        setTotalPages(result.data.total_pages || 1);
       } else {
         toast.error(result.error || 'Failed to load PDFs');
       }
@@ -118,7 +122,6 @@ export default function HomePage() {
       setPollIntervalId(null);
     }
     
-    // Call cancel API if there's a selected file
     if (selectedFile) {
       try {
         const result = await cancelSummarization(selectedFile.id);
@@ -139,19 +142,16 @@ export default function HomePage() {
   };
 
   const pollSummaryStatus = (pdfId: string) => {
-    // Clear existing polling first
     if (pollIntervalId) {
       clearInterval(pollIntervalId);
     }
 
     const intervalId = setInterval(async () => {
       try {
-        const result = await getPDFs({ page: 1, limit: 50 });
+        const result = await getPDFs({ page: 1, limit: 5 });
         if (result.success && result.data?.data) {
           const pdf = result.data.data.find((p: any) => p.id === pdfId);
-          if (pdf) {
-            console.log('Polling status:', pdf.summary_status, pdf.summary_error); // Debug log
-            
+          if (pdf) {            
             setSummaryStatus(pdf.summary_status);
             if (pdf.summary_error) {
               setSummaryError(pdf.summary_error);
@@ -183,13 +183,19 @@ export default function HomePage() {
       } catch (error) {
         console.error('Error polling summary status:', error);
       }
-    }, 3000); // Poll every 3 seconds
+    }, 3000);
 
     setPollIntervalId(intervalId);
   };
 
+  const handlePageChange = (page: number) => {
+    loadPDFs(page, searchQuery);
+  };
+
   const handleSearch = (query: string) => {
     setSearchQuery(query);
+    setCurrentPage(1);
+    loadPDFs(1, query);
   };
 
   const handleUpload = async (file: File) => {
@@ -207,7 +213,7 @@ export default function HomePage() {
 
       toast.success('PDF uploaded successfully!', { id: toastId });
 
-      await loadPDFs();
+      await loadPDFs(currentPage);  
 
       setSelectedFile({
         id: result.data.id,
@@ -222,7 +228,6 @@ export default function HomePage() {
   };
 
   const handleFileSelect = (file: PDFData) => {
-    // Stop any existing polling when switching files
     if (pollIntervalId) {
       clearInterval(pollIntervalId);
       setPollIntervalId(null);
@@ -230,13 +235,11 @@ export default function HomePage() {
     
     setSelectedFile(file);
     
-    // Set initial status based on file data
-    setSummaryStatus(file.summary_status || 'pending');
+     setSummaryStatus(file.summary_status || 'pending');
     setSummaryError(file.summary_error || null);
-    setCurrentProcessingTime(null); // Reset processing time saat ganti file
+    setCurrentProcessingTime(null);  
     
-    // If file is currently processing, start polling
-    if (file.summary_status === 'processing') {
+     if (file.summary_status === 'processing') {
       setIsGenerating(true);
       pollSummaryStatus(file.id);
     } else {
@@ -287,7 +290,7 @@ export default function HomePage() {
                   setSelectedFile(null);
                 }
 
-                await loadPDFs();
+                await loadPDFs(currentPage);
 
                 toast.success(
                   `"${file.original_filename}" deleted successfully`,
@@ -315,7 +318,7 @@ export default function HomePage() {
     setSummaryStatus('processing');
     setSummaryError(null);
     setIsGenerating(true);
-    setCurrentProcessingTime(null); // Reset processing time
+    setCurrentProcessingTime(null); 
 
     try {
       const result = await summarizePDF(selectedFile.id, {
@@ -324,20 +327,20 @@ export default function HomePage() {
       });
 
       if (result.success && result.data) {
-        // Jika ada processing_time_ms, berarti sync response
+
         if (result.data.processing_time_ms) {
-          // Set processing time untuk display
+
           setCurrentProcessingTime(result.data.processing_time_ms);
           
-          // Show immediate success message dengan processing time
+
           const timeInSeconds = (result.data.processing_time_ms / 1000).toFixed(2);
           toast.success(`Summary generated in ${timeInSeconds}s!`);
           
-          // Set status completed langsung
+
           setSummaryStatus('completed');
           setIsGenerating(false);
           
-          // Update selectedFile dengan summary data
+
           setSelectedFile(prev => prev ? {
             ...prev,
             summary: result.data.summary_text,
@@ -346,11 +349,9 @@ export default function HomePage() {
             output_type: result.data.output_type
           } : null);
           
-          // ✅ Return result dengan processing_time_ms untuk SummaryPanel
           return { success: true, data: result.data };
         } else {
-          // Jika tidak ada processing_time_ms, berarti async processing
-          // Start polling untuk monitor status
+
           pollSummaryStatus(selectedFile.id);
           return { success: true, data: result.data };
         }
@@ -377,7 +378,7 @@ export default function HomePage() {
     try {
       setHistoryOpen(true);
       setHistoryFile(file);
-      setHistoryLogs([]); // Reset logs
+      setHistoryLogs([]);
 
       const res = await getPDFLogs(file.id);
 
@@ -404,6 +405,9 @@ export default function HomePage() {
         searchQuery={searchQuery}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={handlePageChange}
       />
 
       <PDFPreview file={selectedFile} />
@@ -417,7 +421,6 @@ export default function HomePage() {
         summaryError={summaryError}
         onRetry={handleRetrySummary}
         onCancel={stopPolling}
-        currentProcessingTime={currentProcessingTime}
       />
 
       <PDFHistoryModal

@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Upload, FileText, Trash2, ChevronLeft, ChevronRight, History, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { SidebarProps, PDFData } from '@/types';
+import { getPDFLogs } from '@/services/PDFService';
 
 export const Sidebar: React.FC<SidebarProps> = ({
   files,
@@ -15,9 +16,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSearch,
   searchQuery,
   isOpen,
-  onToggle
-
+  onToggle,
+  currentPage,
+  totalPages,
+  onPageChange
 }) => {
+  const [filesWithHistory, setFilesWithHistory] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const checkHistoryData = async () => {
+      const newFilesWithHistory = new Set<string>();
+      
+      for (const file of files) {
+        try {
+          const result = await getPDFLogs(file.id, { page: 1, limit: 1 });
+          if (result.success && result.data?.data && result.data.data.length > 0) {
+            newFilesWithHistory.add(file.id);
+          }
+        } catch (error) {
+        }
+      }
+      
+      setFilesWithHistory(newFilesWithHistory);
+    };
+
+    if (files.length > 0) {
+      checkHistoryData();
+    }
+  }, [files]);
+  
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -107,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               Files ({filteredFiles.length})
             </h2>
 
-            <div className="space-y-2">
+            <div className="space-y-2 w-71">
               {filteredFiles.map(file => (
                 <div
                   key={file.id}
@@ -128,15 +155,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </p>
                     </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenHistory(file);
-                      }}
-                      className="p-1 rounded hover:bg-yellow-300"
-                    >
-                      <History className="w-4 h-auto text-gray-400 hover:text-yellow-600" />
-                    </button>
+                    {filesWithHistory.has(file.id) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenHistory(file);
+                        }}
+                        className="p-1 rounded hover:bg-yellow-300"
+                      >
+                        <History className="w-4 h-auto text-gray-400 hover:text-yellow-600" />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -150,6 +179,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               ))}
             </div>
+            
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-between px-2">
+                <button
+                  onClick={() => onPageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className={`p-2 rounded-lg ${
+                    currentPage === 1
+                      ? 'text-gray-400 cursor-not-allowed'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                
+                <span className="text-sm text-gray-600">
+                  Page {currentPage} of {totalPages}
+                </span>
+                
+                <button
+                  onClick={() => onPageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className={`p-2 rounded-lg ${
+                    currentPage === totalPages
+                      ? 'text-gray-400 cursor-not-allowed'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}

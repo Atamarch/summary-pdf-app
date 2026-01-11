@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, Loader2, Copy, Download, Check, Clock, Calendar, X, Settings } from 'lucide-react';
+import { FileText, Loader2, Copy, Check, Clock, Calendar, X, Settings, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { PDFData, SummaryPanelProps } from '@/types';
 
@@ -15,13 +15,14 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   summaryStatus,
   summaryError,
   onRetry,
-  onCancel
+  onCancel,
+  currentProcessingTime
 }) => {
   const [pdfData, setPdfData] = useState<PDFData | null>(null);
   const [copied, setCopied] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [processingTime, setProcessingTime] = useState<number | null>(null);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const [config, setConfig] = useState({
     language: 'auto',
     outputType: 'paragraph',
@@ -47,13 +48,32 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
         summary_status: summaryStatus,
         summary_error: summaryError
       } : null);
-      
+
       // Jika status berubah ke completed, fetch ulang data untuk get summary terbaru
       if (summaryStatus === 'completed' && pdfData.summary_status !== 'completed') {
         fetchPDFData();
       }
     }
   }, [summaryStatus, summaryError]);
+
+  // Close export dropdown when clicking outside
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
+        setExportDropdownOpen(false);
+      }
+    };
+
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [exportDropdownOpen]);
 
   // Handle retry - simple call parent retry
   const handleRetry = async () => {
@@ -81,7 +101,6 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
       const result = await response.json();
       setPdfData(result);
 
-      // Update config from PDF data
       setConfig({
         language: result.language || 'auto',
         outputType: result.output_type === 'bullet' || result.output_type === 'pointer' ? 'pointer' : 'paragraph',
@@ -94,6 +113,8 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     }
   };
 
+  const baseName = pdfData?.original_filename.replace(/\.pdf$/i, '')
+
   const handleCopy = async () => {
     if (pdfData?.summary) {
       const cleanText = pdfData.summary.replace(/<mark[^>]*>(.*?)<\/mark>/g, '$1');
@@ -104,19 +125,54 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     }
   };
 
-  const handleDownload = () => {
+  const handleExportJSON = () => {
     if (pdfData?.summary) {
-      const cleanText = pdfData.summary.replace(/<mark[^>]*>(.*?)<\/mark>/g, '$1');
-      const blob = new Blob([cleanText], { type: 'text/plain' });
+      const exportData = {
+        pdf_id: pdfData.id,
+        original_filename: pdfData.original_filename,
+        file_size: pdfData.file_size,
+        upload_date: pdfData.upload_date,
+        summary: pdfData.summary.replace(/<mark[^>]*>(.*?)<\/mark>/g, '$1'),
+        language: pdfData.language,
+        output_type: pdfData.output_type,
+        summary_status: pdfData.summary_status,
+        exported_at: new Date().toISOString()
+      };
+
+      const jsonString = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `summary-${pdfData.original_filename}-${Date.now()}.txt`;
+      a.download = `summary-${baseName}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success("Summary downloaded!");
+      toast.success("Summary exported as JSON!");
+      setExportDropdownOpen(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (pdfData?.summary) {
+      const cleanSummary = pdfData.summary.replace(/<mark[^>]*>(.*?)<\/mark>/g, '$1').replace(/"/g, '""');
+
+      const csvHeaders = 'PDF ID,Original Filename,File Size (bytes),Upload Date,Summary,Language,Output Type,Status,Exported At\n';
+      const csvRow = `"${pdfData.id}","${pdfData.original_filename}","${pdfData.file_size}","${pdfData.upload_date}","${cleanSummary}","${pdfData.language}","${pdfData.output_type}","${pdfData.summary_status}","${new Date().toISOString()}"`;
+
+      const csvContent = csvHeaders + csvRow;
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `summary-${baseName}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Summary exported as CSV!");
+      setExportDropdownOpen(false);
     }
   };
 
@@ -124,9 +180,6 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
     const result = await onSummarize(config);
 
     if (result.success && result.data) {
-      setProcessingTime(result.data.processing_time_ms ?? null);
-
-      // Update pdfData langsung dari response
       setPdfData(prev => prev ? {
         ...prev,
         summary: result.data!.summary_text,
@@ -142,7 +195,6 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
       'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
     ];
 
-    // Parse manual dari string "2026-01-08T12:34"
     const [datePart, timePart] = date.slice(0, 16).split('T');
     const [year, month, day] = datePart.split('-');
 
@@ -185,7 +237,6 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
   };
 
   const getButtonConfig = () => {
-    // Prioritas: props summaryStatus > pdfData.summary_status
     const currentStatus = summaryStatus || pdfData?.summary_status || 'pending';
 
     if (currentStatus === 'processing' || isGenerating) {
@@ -330,13 +381,34 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                   </>
                 )}
               </button>
-              <button
-                onClick={handleDownload}
-                className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg flex items-center justify-center gap-2 transition-colors text-sm font-medium"
-              >
-                <Download className="w-4 h-4" />
-                Download
-              </button>
+
+              {/* Export Dropdown */}
+              <div className="relative flex-1" ref={exportDropdownRef}>
+                <button
+                  onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+                  className="w-full px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg flex items-center justify-center gap-2 transition-colors text-sm font-medium"
+                >
+                  <span>Export</span>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+
+                {exportDropdownOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                    <button
+                      onClick={handleExportJSON}
+                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg transition-colors"
+                    >
+                      JSON
+                    </button>
+                    <button
+                      onClick={handleExportCSV}
+                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-b-lg transition-colors"
+                    >
+                      CSV
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Summary Content */}
@@ -369,7 +441,7 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
             )}
 
             {/* Processing Info */}
-            {(pdfData?.upload_date || processingTime !== null) && (
+            {(pdfData?.upload_date || (currentProcessingTime != null)) && (
               <div className="space-y-2 text-xs text-gray-500 bg-gray-50 rounded-lg p-3 border border-gray-200">
                 {pdfData?.upload_date && (
                   <div className="flex items-center gap-2">
@@ -377,10 +449,10 @@ export const SummaryPanel: React.FC<SummaryPanelProps> = ({
                     <span>Uploaded: {formatDate(pdfData.upload_date)}</span>
                   </div>
                 )}
-                {processingTime !== null && (
+                {(currentProcessingTime != null) && (
                   <div className="flex items-center gap-2">
                     <Clock className="w-3.5 h-3.5" />
-                    <span>Processing Time: {Math.round(processingTime / 1000)}s</span>
+                    <span>Processing Time: {Math.round(currentProcessingTime / 1000)}s</span>
                   </div>
                 )}
               </div>

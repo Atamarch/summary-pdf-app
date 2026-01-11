@@ -85,7 +85,7 @@ func (s *pdfService) UploadPDF(c *fiber.Ctx) (*model.PDF, error) {
 		return nil, fiber.NewError(fiber.StatusBadRequest, "Invalid file type, only PDF files are allowed")
 	}
 
-	maxSize := int64(10 * 1024 * 1024) // 10MB
+	maxSize := int64(10 * 1024 * 1024)
 	if file.Size > maxSize {
 		fileSizeMB := float64(file.Size) / (1024 * 1024)
 		return nil, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("File size (%.2f MB) exceeds the maximum limit of 10 MB. Please choose a smaller file.", fileSizeMB))
@@ -135,7 +135,7 @@ func (s *pdfService) GetPDFs(c *fiber.Ctx, params *validation.QueryPDF) ([]model
 	query := s.DB.WithContext(c.Context()).Order("upload_date desc")
 
 	if search := params.Search; search != "" {
-		query = query.Where("original_filename LIKE ?", "%"+search+"%")
+		query = query.Where("original_filename ILIKE ?", "%"+search+"%")
 	}
 
 	result := query.Model(&model.PDF{}).Count(&totalResults)
@@ -252,9 +252,8 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.Summa
 				s.setFailedStatus(c, id, err.Error())
 				return nil, err
 			}
-			// Transient error, wait before retry
 			if attempt < maxRetries {
-				waitTime := time.Duration(attempt*5) * time.Second // 5s, 10s, 15s
+				waitTime := time.Duration(attempt*5) * time.Second
 				s.Log.Infof("Retrying in %v...", waitTime)
 				select {
 				case <-time.After(waitTime):
@@ -266,7 +265,6 @@ func (s *pdfService) SummarizePDF(c *fiber.Ctx, id string, req *validation.Summa
 				continue
 			}
 		} else {
-			// Success
 			if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
 				"summary":        pythonResp.SummaryText,
 				"summary_status": "completed",
@@ -307,7 +305,6 @@ func (s *pdfService) callPythonService(ctx context.Context, pdf *model.PDF, file
 	}
 	part.Write(fileContent)
 
-	// Kirim metadata
 	writer.WriteField("pdf_id", pdf.ID.String())
 	writer.WriteField("original_filename", pdf.OriginalFilename)
 	writer.WriteField("file_size", fmt.Sprintf("%d", pdf.FileSize))
@@ -316,7 +313,6 @@ func (s *pdfService) callPythonService(ctx context.Context, pdf *model.PDF, file
 
 	writer.Close()
 
-	// Call Python service
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", s.SummaryServiceURL+"/summarize", body)
 	if err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to create request")
@@ -333,7 +329,6 @@ func (s *pdfService) callPythonService(ctx context.Context, pdf *model.PDF, file
 
 	respBody, _ := io.ReadAll(httpResp.Body)
 
-	// Parse response
 	var pythonResp dto.PythonSummarizeResponse
 	if err := json.Unmarshal(respBody, &pythonResp); err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to parse response")
@@ -380,13 +375,11 @@ func (s *pdfService) ViewPDF(c *fiber.Ctx, id string) error {
 }
 
 func (s *pdfService) CancelSummarization(c *fiber.Ctx, id string) error {
-	// Validate PDF exists
 	_, err := s.GetPDFByID(c, id)
 	if err != nil {
 		return err
 	}
 
-	// Update status to cancelled/pending
 	if err := s.DB.WithContext(c.Context()).Model(&model.PDF{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"summary_status": "pending",
 		"summary_error":  nil,

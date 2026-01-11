@@ -31,6 +31,10 @@ export interface SidebarProps {
   onOpenHistory: (file: PDFData) => void;
   onSearch: (query: string) => void;
   searchQuery: string;
+  // Pagination props
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
 }
 
 export interface PDFPreviewProps {
@@ -46,6 +50,7 @@ export interface SummaryPanelProps {
   summaryError?: string | null;
   onRetry?: () => void;
   onCancel?: () => void;
+  currentProcessingTime?: number | null;
 }
 
 export interface PDFResponse {
